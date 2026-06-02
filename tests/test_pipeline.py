@@ -39,11 +39,11 @@ def test_custom_problem_probability_is_bucketed() -> None:
         profile=result.profile,
         tag_stats=result.weakness,
         solve_model_report=result.solve_model,
-        recent_failures=4,
     )
 
     assert 0 <= score["solve_probability"] <= 1
     assert score["bucket"] in {"confidence", "growth", "stretch", "avoid"}
+    assert score["recent_failures_used"] >= 0
 
 
 def test_problem_rating_is_estimated_when_codeforces_rating_is_missing() -> None:
@@ -67,7 +67,6 @@ def test_solve_probability_decreases_as_problem_rating_increases() -> None:
             profile=result.profile,
             tag_stats=result.weakness,
             solve_model_report=result.solve_model,
-            recent_failures=3,
         )["solve_probability"]
         for rating in [1200, 1600, 2000, 2400]
     ]

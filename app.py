@@ -373,13 +373,6 @@ def render_probability(result) -> None:
                 solved_count = st.number_input("Problem solved count", min_value=0, max_value=200000, value=4500, step=100)
                 name = st.text_input("Problem name", value="Custom training target")
 
-        recent_failures = st.slider(
-            "Recent failures on these tags",
-            0,
-            20,
-            _default_recent_failures(tags, result.weakness),
-            help="This measures recent drag from similar topics, not global failure count.",
-        )
         score = score_custom_problem(
             rating=rating,
             tags=tags,
@@ -388,7 +381,9 @@ def render_probability(result) -> None:
             profile=result.profile,
             tag_stats=result.weakness,
             solve_model_report=result.solve_model,
-            recent_failures=recent_failures,
+        )
+        st.caption(
+            f"AlgoRadar inferred recent tag failures from your history: {score['recent_failures_used']}"
         )
 
     with right:
@@ -576,16 +571,6 @@ def _find_problem_by_code(problems: pd.DataFrame, code: str) -> pd.Series | None
 
 def _normalize_problem_code(code: str) -> str:
     return "".join(str(code or "").upper().split())
-
-
-def _default_recent_failures(tags: list[str], weakness: pd.DataFrame) -> int:
-    if not tags or weakness.empty:
-        return 0
-    lookup = weakness.set_index("tag")["recent_failures"].to_dict()
-    values = [float(lookup.get(tag, 0)) for tag in tags]
-    if not values:
-        return 0
-    return int(max(0, min(20, round(sum(values) / len(values)))))
 
 
 def _format_tags(tags) -> str:

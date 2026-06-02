@@ -84,7 +84,7 @@ AlgoRadar avoids treating every number as equally meaningful. The main user-faci
 - **Rating-wise accuracy**: success rate grouped by official or estimated problem rating.
 - **Hardest solved**: highest-rated accepted problem for a tag.
 - **Repair priority**: a weakness score based on low accuracy, recent failures, and attempt volume.
-- **Solve probability**: a monotonic scorecard estimate. If the same user, tags, solved count, and recent-failure context stay fixed, increasing the problem rating cannot increase the probability.
+- **Solve probability**: a monotonic scorecard estimate. AlgoRadar looks up the problem and automatically uses your recent failures on its tags. If the same user, tags, and solved count stay fixed, increasing the problem rating cannot increase the probability.
 - **Rating source**: `official` means Codeforces provides the problem rating; `estimated` means AlgoRadar inferred it from problem index and solved count.
 
 ## Setup

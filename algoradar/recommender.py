@@ -89,7 +89,8 @@ def score_custom_problem(
             "solved_count": solved_count,
         }
     )
-    features = make_problem_feature_row(problem, profile, tag_stats, recent_failures_override=recent_failures)
+    inferred_recent_failures = _infer_recent_failures(tags, tag_stats) if recent_failures is None else recent_failures
+    features = make_problem_feature_row(problem, profile, tag_stats, recent_failures_override=inferred_recent_failures)
     probability = float(predict_solve_probability(solve_model_report, pd.DataFrame([features]))[0])
     return {
         "problem_id": "custom",
@@ -101,6 +102,7 @@ def score_custom_problem(
         "solve_probability_pct": round(probability * 100, 1),
         "bucket": bucket_probability(probability),
         "features": features,
+        "recent_failures_used": round(float(inferred_recent_failures), 1),
     }
 
 
@@ -113,6 +115,14 @@ def _pick_bucket(candidate: pd.DataFrame, bucket: str, count: int, sort_by: list
     if frame.empty and bucket == "stretch":
         frame = candidate[candidate["solve_probability"].between(0.18, 0.5)].copy()
     return frame.sort_values(sort_by, ascending=False).head(count)
+
+
+def _infer_recent_failures(tags: list[str], tag_stats: pd.DataFrame) -> float:
+    if not tags or tag_stats.empty or "recent_failures" not in tag_stats.columns:
+        return 0.0
+    lookup = tag_stats.set_index("tag")["recent_failures"].to_dict()
+    values = [float(lookup.get(tag, 0.0) or 0.0) for tag in tags]
+    return float(np.mean(values)) if values else 0.0
 
 
 def _prefilter_candidates(
