@@ -5,6 +5,7 @@ from typing import Any
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, precision_score, recall_score
@@ -37,8 +38,31 @@ def train_contest_score_predictor(profile: dict[str, Any], random_state: int = 4
     train_frame = _synthetic_contest_training_frame(profile, random_state=random_state)
     x = train_frame[CONTEST_FEATURE_COLUMNS]
     y = train_frame["band"]
+    profile_frame = pd.DataFrame([{key: profile.get(key, 0) for key in CONTEST_FEATURE_COLUMNS}])
 
-    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.24, stratify=y, random_state=random_state)
+    if y.nunique() < 2:
+        model = DummyClassifier(strategy="constant", constant=str(y.iloc[0]))
+        model.fit(x, y)
+        predicted_band = str(model.predict(profile_frame)[0])
+        metrics = {"accuracy": 1.0, "precision": 1.0, "recall": 1.0}
+        report = {
+            "selected_model_name": "constant_baseline",
+            "model": model,
+            "logistic_regression": None,
+            "random_forest": None,
+            "metrics": {
+                "constant_baseline": metrics,
+            },
+            "features": CONTEST_FEATURE_COLUMNS,
+            "feature_importance": _importance_frame(CONTEST_FEATURE_COLUMNS, np.zeros(len(CONTEST_FEATURE_COLUMNS))),
+            "predicted_band": predicted_band,
+            "band_probabilities": _probability_map(model, profile_frame),
+        }
+        joblib.dump(report, MODEL_DIR / "contest_score_predictor.joblib")
+        return report
+
+    stratify = y if y.nunique() > 1 and y.value_counts().min() >= 2 else None
+    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.24, stratify=stratify, random_state=random_state)
 
     logistic = Pipeline(
         [
@@ -65,7 +89,6 @@ def train_contest_score_predictor(profile: dict[str, Any], random_state: int = 4
     selected_name = "random_forest" if forest_metrics["accuracy"] >= logistic_metrics["accuracy"] else "logistic_regression"
     selected_model = forest if selected_name == "random_forest" else logistic
     feature_importance = _contest_feature_importance(selected_model)
-    profile_frame = pd.DataFrame([{key: profile.get(key, 0) for key in CONTEST_FEATURE_COLUMNS}])
     predicted_band = str(selected_model.predict(profile_frame)[0])
     probabilities = _probability_map(selected_model, profile_frame)
 

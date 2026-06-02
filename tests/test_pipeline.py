@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from algoradar.features import submissions_to_frame, tag_feature_frame
+from algoradar.models import train_contest_score_predictor
 from algoradar.pipeline import run_analysis
 from algoradar.recommender import score_custom_problem
 from algoradar.sample_data import make_sample_bundle
@@ -43,3 +44,25 @@ def test_custom_problem_probability_is_bucketed() -> None:
 
     assert 0 <= score["solve_probability"] <= 1
     assert score["bucket"] in {"confidence", "growth", "stretch", "avoid"}
+
+
+def test_contest_predictor_handles_imbalanced_training_bands() -> None:
+    profile = {
+        "problems_solved": 1300,
+        "average_rating": 1950,
+        "tags_attempted": 22,
+        "wrong_submissions": 650,
+        "submissions": 2500,
+        "current_rating": 3800,
+        "max_rating": 3900,
+        "contest_count": 120,
+        "contest_rank_mean_last5": 300,
+        "contest_rank_best": 1,
+        "rating_volatility": 85,
+        "recent_accuracy": 60,
+    }
+
+    report = train_contest_score_predictor(profile)
+
+    assert report["predicted_band"]
+    assert report["selected_model_name"] in {"random_forest", "logistic_regression", "constant_baseline"}

@@ -270,8 +270,15 @@ def render_recommendations(result) -> None:
         ("stretch", "5 stretch problems"),
     ]:
         panel_title(label, "ranked by probability, tag fit, popularity, and rating distance")
-        frame = recs[recs["bucket"] == bucket][
+        frame = recs[recs["bucket"] == bucket].copy()
+        if frame.empty:
+            st.info(f"No {bucket} recommendations found for this handle yet.")
+            continue
+
+        frame["open"] = frame.apply(_codeforces_problem_url, axis=1)
+        frame = frame[
             [
+                "open",
                 "problem_id",
                 "name",
                 "rating",
@@ -282,19 +289,39 @@ def render_recommendations(result) -> None:
                 "rank_score",
             ]
         ].copy()
-        frame["tags"] = frame["tags"].apply(lambda tags: ", ".join(tags))
+        frame["tags"] = frame["tags"].apply(_format_tags)
         frame["tag_similarity"] = frame["tag_similarity"].round(2)
         frame["rank_score"] = frame["rank_score"].round(3)
-        st.dataframe(frame, width="stretch", hide_index=True)
+        st.dataframe(
+            frame,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "open": st.column_config.LinkColumn("Open", display_text="Codeforces"),
+                "solve_probability_pct": st.column_config.NumberColumn("Solve %", format="%.1f%%"),
+                "tag_similarity": st.column_config.NumberColumn("Tag fit", format="%.2f"),
+                "rank_score": st.column_config.NumberColumn("Rank score", format="%.3f"),
+            },
+        )
 
     panel_title("Similar-but-harder retrieval", "embeddings/vector search layer")
     if result.similar_harder.empty:
         st.info("No similar harder problems found.")
     else:
-        frame = result.similar_harder[["problem_id", "name", "rating", "tags", "semantic_score", "solved_count"]].copy()
-        frame["tags"] = frame["tags"].apply(lambda tags: ", ".join(tags))
+        frame = result.similar_harder.copy()
+        frame["open"] = frame.apply(_codeforces_problem_url, axis=1)
+        frame = frame[["open", "problem_id", "name", "rating", "tags", "semantic_score", "solved_count"]].copy()
+        frame["tags"] = frame["tags"].apply(_format_tags)
         frame["semantic_score"] = frame["semantic_score"].round(3)
-        st.dataframe(frame, width="stretch", hide_index=True)
+        st.dataframe(
+            frame,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "open": st.column_config.LinkColumn("Open", display_text="Codeforces"),
+                "semantic_score": st.column_config.NumberColumn("Similarity", format="%.3f"),
+            },
+        )
 
 
 def render_probability(result) -> None:
@@ -476,6 +503,30 @@ def bucket_color(bucket: str) -> str:
         "stretch": "#f28b82",
         "avoid": "#6f7886",
     }.get(bucket, "#75a7ff")
+
+
+def _format_tags(tags) -> str:
+    if isinstance(tags, list):
+        return ", ".join(str(tag) for tag in tags)
+    if pd.isna(tags):
+        return ""
+    return str(tags)
+
+
+def _codeforces_problem_url(row: pd.Series) -> str:
+    contest_id = row.get("contest_id")
+    index = row.get("index")
+    if pd.notna(contest_id) and pd.notna(index):
+        return f"https://codeforces.com/problemset/problem/{int(contest_id)}/{index}"
+    problem_id = str(row.get("problem_id", ""))
+    split_at = 0
+    while split_at < len(problem_id) and problem_id[split_at].isdigit():
+        split_at += 1
+    digits = problem_id[:split_at]
+    suffix = problem_id[split_at:]
+    if digits and suffix:
+        return f"https://codeforces.com/problemset/problem/{digits}/{suffix}"
+    return "https://codeforces.com/problemset"
 
 
 def inject_css() -> None:
