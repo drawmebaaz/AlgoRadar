@@ -1,0 +1,36 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+tools/
+.venv/
+dist
+dist-ssr
+*.local
+cloudflared*.log
+
+# AlgoRadar generated artifacts
+data/cache/*
+data/models/*
+!data/cache/.gitkeep
+!data/models/.gitkeep
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
