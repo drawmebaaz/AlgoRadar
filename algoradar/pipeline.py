@@ -109,7 +109,7 @@ def run_analysis(
         semantic_method=semantic_index.method,
         similar_harder=similar_harder,
         roadmap=build_weekly_roadmap(weakness, recommendations),
-        progress=build_progress_frame(submissions),
+        progress=build_progress_frame(submissions, profile),
     )
 
 
@@ -129,13 +129,16 @@ def build_weekly_roadmap(weakness: pd.DataFrame, recommendations: pd.DataFrame) 
     return pd.DataFrame(days, columns=["day", "theme", "focus", "load"])
 
 
-def build_progress_frame(submissions: pd.DataFrame) -> pd.DataFrame:
+def build_progress_frame(submissions: pd.DataFrame, profile: dict[str, Any] | None = None) -> pd.DataFrame:
     if submissions.empty:
         return pd.DataFrame(columns=["week", "solved", "attempts", "accuracy", "growth_attempts"])
 
     frame = submissions.copy()
     frame["week"] = frame["created_at"].dt.tz_convert(None).dt.to_period("W").astype(str)
-    frame["growth_attempt"] = frame["rating"].between(1400, 1900)
+    profile = profile or {}
+    growth_low = float(profile.get("growth_rating_low", 1400))
+    growth_high = float(profile.get("growth_rating_high", 1900))
+    frame["growth_attempt"] = frame["rating"].between(growth_low, growth_high)
     progress = (
         frame.groupby("week")
         .agg(

@@ -26,7 +26,7 @@ def recommend_problems(
 
     solved_ids = set(submissions[submissions["is_accepted"]]["problem_id"].unique()) if not submissions.empty else set()
     candidate = problems[~problems["problem_id"].isin(solved_ids)].copy()
-    candidate = candidate[candidate["rating"].between(800, 2600)].copy()
+    candidate = candidate[candidate["rating"].between(800, 3500)].copy()
     if candidate.empty:
         candidate = problems.copy()
 
@@ -125,16 +125,18 @@ def _prefilter_candidates(
         return candidate
 
     user_rating = float(profile.get("current_rating", 1200) or 1200)
-    if user_rating >= 2400:
-        lower, upper = 1800, 2600
+    if user_rating >= 3000:
+        lower, upper = max(2200, int((user_rating - 900) // 100 * 100)), 3500
+    elif user_rating >= 2400:
+        lower, upper = 1800, 3500
     else:
         lower = max(800, int((user_rating - 500) // 100 * 100))
-        upper = min(2600, int((user_rating + 700) // 100 * 100))
+        upper = min(3500, int((user_rating + 700) // 100 * 100))
 
     frame = candidate[candidate["rating"].between(lower, upper)].copy()
     if len(frame) < min(500, len(candidate)):
         fallback_lower = max(800, int((user_rating - 800) // 100 * 100))
-        fallback_upper = min(2600, int((user_rating + 900) // 100 * 100))
+        fallback_upper = min(3500, int((user_rating + 900) // 100 * 100))
         frame = candidate[candidate["rating"].between(fallback_lower, fallback_upper)].copy()
     if frame.empty:
         frame = candidate.copy()

@@ -20,6 +20,18 @@ SOLVE_FEATURE_COLUMNS = [
     "recent_accuracy",
 ]
 
+INDEX_RATING_BASELINE = {
+    "A": 850,
+    "B": 1100,
+    "C": 1400,
+    "D": 1700,
+    "E": 2050,
+    "F": 2400,
+    "G": 2700,
+    "H": 3000,
+    "I": 3200,
+}
+
 
 def problem_id(problem: dict[str, Any]) -> str:
     contest_id = problem.get("contestId", "unknown")
@@ -34,6 +46,9 @@ def submissions_to_frame(submissions: list[dict[str, Any]]) -> pd.DataFrame:
         verdict = submission.get("verdict", "UNKNOWN")
         tags = problem.get("tags") or []
         created = pd.to_datetime(submission.get("creationTimeSeconds", 0), unit="s", utc=True)
+        raw_rating = problem.get("rating")
+        official_rating = float(raw_rating) if raw_rating is not None else np.nan
+        rating = official_rating if not np.isnan(official_rating) else estimate_problem_rating(problem.get("index"), 0)
         rows.append(
             {
                 "submission_id": submission.get("id"),
@@ -42,7 +57,9 @@ def submissions_to_frame(submissions: list[dict[str, Any]]) -> pd.DataFrame:
                 "problem_index": problem.get("index"),
                 "problem_id": problem_id(problem),
                 "problem_name": problem.get("name", "Unknown problem"),
-                "rating": float(problem.get("rating") or np.nan),
+                "official_rating": official_rating,
+                "rating": rating,
+                "rating_source": "official" if not np.isnan(official_rating) else "estimated",
                 "tags": list(tags),
                 "tag_text": " ".join(tags),
                 "primary_tag": tags[0] if tags else "untagged",
@@ -60,7 +77,6 @@ def submissions_to_frame(submissions: list[dict[str, Any]]) -> pd.DataFrame:
     if frame.empty:
         return _empty_submission_frame()
 
-    frame["rating"] = frame["rating"].fillna(frame["rating"].median() if frame["rating"].notna().any() else 1200)
     return frame.sort_values("created_at").reset_index(drop=True)
 
 
@@ -94,23 +110,42 @@ def problemset_to_frame(problems: list[dict[str, Any]], statistics: list[dict[st
     for problem in problems:
         pid = problem_id(problem)
         tags = problem.get("tags") or []
+        solved_count = stat_map.get(pid, 0)
+        raw_rating = problem.get("rating")
+        official_rating = float(raw_rating) if raw_rating is not None else np.nan
+        rating = official_rating if not np.isnan(official_rating) else estimate_problem_rating(problem.get("index"), solved_count)
         rows.append(
             {
                 "problem_id": pid,
                 "contest_id": problem.get("contestId"),
                 "index": problem.get("index"),
                 "name": problem.get("name", "Unknown problem"),
-                "rating": float(problem.get("rating") or np.nan),
+                "official_rating": official_rating,
+                "rating": rating,
+                "rating_source": "official" if not np.isnan(official_rating) else "estimated",
                 "tags": list(tags),
                 "tag_text": " ".join(tags),
                 "tag_count": len(tags),
-                "solved_count": stat_map.get(pid, 0),
+                "solved_count": solved_count,
             }
         )
     frame = pd.DataFrame(rows)
     if frame.empty:
-        return pd.DataFrame(columns=["problem_id", "name", "rating", "tags", "tag_text", "tag_count", "solved_count"])
-    frame["rating"] = frame["rating"].fillna(frame["rating"].median() if frame["rating"].notna().any() else 1200)
+        return pd.DataFrame(
+            columns=[
+                "problem_id",
+                "contest_id",
+                "index",
+                "name",
+                "official_rating",
+                "rating",
+                "rating_source",
+                "tags",
+                "tag_text",
+                "tag_count",
+                "solved_count",
+            ]
+        )
     return frame.drop_duplicates("problem_id").reset_index(drop=True)
 
 
@@ -131,6 +166,7 @@ def tag_feature_frame(submissions: pd.DataFrame, problems: pd.DataFrame | None =
                 "wrong_submissions": 0,
                 "recent_failures": 0,
                 "recent_accuracy": 0.0,
+                "max_rating_solved": 0.0,
             }
         )
 
@@ -145,6 +181,7 @@ def tag_feature_frame(submissions: pd.DataFrame, problems: pd.DataFrame | None =
     accepted_submissions = grouped["is_accepted"].sum().rename("accepted_submissions")
     wrong = grouped["is_wrong"].sum().rename("wrong_submissions")
     avg_rating = exploded[exploded["is_accepted"]].groupby("tag")["rating"].mean().rename("avg_rating_solved")
+    max_rating = exploded[exploded["is_accepted"]].groupby("tag")["rating"].max().rename("max_rating_solved")
 
     recent = exploded.sort_values("created_at").groupby("tag", group_keys=False).tail(30)
     recent_failures = recent[recent["is_wrong"]].groupby("tag").size().rename("recent_failures")
@@ -152,7 +189,7 @@ def tag_feature_frame(submissions: pd.DataFrame, problems: pd.DataFrame | None =
 
     frame = pd.DataFrame(index=sorted(all_tags))
     frame.index.name = "tag"
-    frame = frame.join([attempts, solved, accepted_submissions, wrong, avg_rating, recent_failures, recent_accuracy]).fillna(0)
+    frame = frame.join([attempts, solved, accepted_submissions, wrong, avg_rating, max_rating, recent_failures, recent_accuracy]).fillna(0)
     frame["accuracy"] = np.where(frame["attempts"] > 0, frame["accepted_submissions"] / frame["attempts"] * 100, 0.0)
     frame["recent_accuracy"] = frame["recent_accuracy"] * 100
     return frame.reset_index()[
@@ -162,6 +199,7 @@ def tag_feature_frame(submissions: pd.DataFrame, problems: pd.DataFrame | None =
             "solved",
             "accuracy",
             "avg_rating_solved",
+            "max_rating_solved",
             "wrong_submissions",
             "recent_failures",
             "recent_accuracy",
@@ -173,6 +211,8 @@ def user_profile_features(submissions: pd.DataFrame, ratings: pd.DataFrame) -> d
     accepted = submissions[submissions["is_accepted"]] if not submissions.empty else submissions
     solved_unique = accepted.drop_duplicates("problem_id") if not accepted.empty else accepted
     avg_rating = float(solved_unique["rating"].mean()) if not solved_unique.empty else 1200.0
+    solved_p75 = float(solved_unique["rating"].quantile(0.75)) if not solved_unique.empty else 0.0
+    solved_max = float(solved_unique["rating"].max()) if not solved_unique.empty else 0.0
     recent = submissions.tail(80) if not submissions.empty else submissions
     recent_accuracy = float(recent["is_accepted"].mean() * 100) if not recent.empty else 0.0
 
@@ -182,6 +222,8 @@ def user_profile_features(submissions: pd.DataFrame, ratings: pd.DataFrame) -> d
         rank_mean = float(ratings["rank"].tail(5).mean())
         rank_best = int(ratings["rank"].min())
         rating_volatility = float(ratings["delta"].tail(8).std() or 0)
+        last_delta = int(ratings.iloc[-1]["delta"])
+        recent_delta = int(ratings["delta"].tail(5).sum())
         contest_count = int(len(ratings))
         contest_rank_history = ",".join(str(int(item)) for item in ratings["rank"].tail(8).tolist())
     else:
@@ -190,22 +232,30 @@ def user_profile_features(submissions: pd.DataFrame, ratings: pd.DataFrame) -> d
         rank_mean = 0.0
         rank_best = 0
         rating_volatility = 0.0
+        last_delta = 0
+        recent_delta = 0
         contest_count = 0
         contest_rank_history = ""
 
     return {
         "problems_solved": int(solved_unique["problem_id"].nunique()) if not solved_unique.empty else 0,
         "average_rating": round(avg_rating, 1),
+        "training_ceiling": int(round(solved_p75 / 100) * 100) if solved_p75 else 0,
+        "hardest_solved_rating": int(solved_max) if solved_max else 0,
         "tags_attempted": int(len({tag for tags in submissions["tags"] for tag in tags})) if not submissions.empty else 0,
         "wrong_submissions": int(submissions["is_wrong"].sum()) if not submissions.empty else 0,
         "submissions": int(len(submissions)),
         "current_rating": current_rating,
         "max_rating": max_rating,
+        "growth_rating_low": max(800, int((current_rating - 100) // 100 * 100)),
+        "growth_rating_high": min(3500, int((current_rating + 400) // 100 * 100)),
         "contest_count": contest_count,
         "contest_rank_mean_last5": round(rank_mean, 1),
         "contest_rank_best": rank_best,
         "contest_rank_history": contest_rank_history,
         "rating_volatility": round(rating_volatility, 2),
+        "last_contest_delta": last_delta,
+        "recent_rating_delta": recent_delta,
         "recent_accuracy": round(recent_accuracy, 1),
     }
 
@@ -214,7 +264,7 @@ def rating_accuracy_frame(submissions: pd.DataFrame) -> pd.DataFrame:
     if submissions.empty:
         return pd.DataFrame(columns=["rating_bucket", "attempts", "accepted", "accuracy"])
     frame = submissions.copy()
-    frame["rating_bucket"] = (frame["rating"] // 200 * 200).astype(int).astype(str)
+    frame["rating_bucket"] = (frame["rating"] // 200 * 200).astype(int)
     summary = (
         frame.groupby("rating_bucket")
         .agg(attempts=("submission_id", "count"), accepted=("is_accepted", "sum"))
@@ -239,8 +289,8 @@ def solved_difficulty_frame(submissions: pd.DataFrame) -> pd.DataFrame:
     solved = submissions[submissions["is_accepted"]].drop_duplicates("problem_id").copy()
     if solved.empty:
         return pd.DataFrame(columns=["rating_bucket", "solved"])
-    solved["rating_bucket"] = (solved["rating"] // 200 * 200).astype(int).astype(str)
-    return solved.groupby("rating_bucket").size().rename("solved").reset_index()
+    solved["rating_bucket"] = (solved["rating"] // 200 * 200).astype(int)
+    return solved.groupby("rating_bucket").size().rename("solved").reset_index().sort_values("rating_bucket")
 
 
 def contest_trend_frame(ratings: pd.DataFrame) -> pd.DataFrame:
@@ -334,6 +384,23 @@ def _explode_submission_tags(submissions: pd.DataFrame) -> pd.DataFrame:
     return frame.explode("tags").rename(columns={"tags": "tag"})
 
 
+def estimate_problem_rating(index: Any, solved_count: int | float = 0) -> float:
+    """Estimate an unrated Codeforces problem's difficulty from index and popularity."""
+    index_text = str(index or "C").upper()
+    primary_letter = next((char for char in index_text if char.isalpha()), "C")
+    index_base = INDEX_RATING_BASELINE.get(primary_letter, 1800)
+
+    solved = max(0.0, float(solved_count or 0))
+    if solved <= 0:
+        popularity_estimate = index_base
+    else:
+        popularity_estimate = 2850 - np.log1p(solved) * 205
+
+    estimated = index_base * 0.62 + popularity_estimate * 0.38
+    estimated = float(np.clip(estimated, 800, 3500))
+    return round(estimated / 100) * 100
+
+
 def _tag_value(tag_lookup: dict[str, dict[str, Any]], tag: str, key: str) -> float:
     return float(tag_lookup.get(tag, {}).get(key, 0.0) or 0.0)
 
@@ -360,6 +427,8 @@ def _empty_submission_frame() -> pd.DataFrame:
             "problem_id",
             "problem_name",
             "rating",
+            "official_rating",
+            "rating_source",
             "tags",
             "tag_text",
             "primary_tag",

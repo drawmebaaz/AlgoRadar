@@ -137,20 +137,22 @@ def train_solve_probability_model(examples: pd.DataFrame, random_state: int = 42
 
     logistic_metrics = _classification_metrics(y_test, logistic.predict(x_test))
     forest_metrics = _classification_metrics(y_test, forest.predict(x_test))
-    selected_model = forest if forest_metrics["accuracy"] >= logistic_metrics["accuracy"] else logistic
-    selected_name = "random_forest" if selected_model is forest else "logistic_regression"
+    scorecard_probabilities = _monotonic_solve_probabilities(x_test)
+    scorecard_predictions = (scorecard_probabilities >= 0.5).astype(int)
+    scorecard_metrics = _classification_metrics(y_test, scorecard_predictions)
 
     report = {
-        "selected_model_name": selected_name,
-        "model": selected_model,
+        "selected_model_name": "monotonic_scorecard",
+        "model": None,
         "logistic_regression": logistic,
         "random_forest": forest,
         "metrics": {
+            "monotonic_scorecard": scorecard_metrics,
             "logistic_regression": logistic_metrics,
             "random_forest": forest_metrics,
         },
         "features": SOLVE_FEATURE_COLUMNS,
-        "feature_importance": _solve_feature_importance(selected_model),
+        "feature_importance": _scorecard_feature_importance(),
         "training_rows": int(len(frame)),
     }
     joblib.dump(report, MODEL_DIR / "solve_probability_model.joblib")
@@ -160,6 +162,9 @@ def train_solve_probability_model(examples: pd.DataFrame, random_state: int = 42
 def predict_solve_probability(model_report: dict[str, Any], feature_rows: pd.DataFrame | list[dict[str, Any]]) -> np.ndarray:
     frame = pd.DataFrame(feature_rows)
     x = frame[model_report["features"]]
+    if model_report.get("selected_model_name") == "monotonic_scorecard":
+        return _monotonic_solve_probabilities(x)
+
     model = model_report["model"]
     if hasattr(model, "predict_proba"):
         return model.predict_proba(x)[:, 1]
@@ -298,6 +303,29 @@ def _ensure_solve_training_rows(examples: pd.DataFrame, random_state: int = 42) 
     return pd.concat([examples, synthetic], ignore_index=True)
 
 
+def _monotonic_solve_probabilities(features: pd.DataFrame) -> np.ndarray:
+    frame = features.copy()
+    rating_gap = frame["problem_rating"].astype(float) - frame["user_rating"].astype(float)
+    tag_accuracy = frame["tag_accuracy"].astype(float).clip(0, 100)
+    attempts = frame["attempts_on_tag"].astype(float).clip(lower=0)
+    recent_failures = frame["recent_failures"].astype(float).clip(lower=0)
+    popularity = frame["popularity_log"].astype(float).clip(lower=0)
+    tag_count = frame["tag_count"].astype(float).clip(lower=0)
+    recent_accuracy = frame["recent_accuracy"].astype(float).clip(0, 100)
+
+    logit = (
+        0.85
+        - rating_gap / 285
+        + (tag_accuracy - 50) / 30
+        + (recent_accuracy - 55) / 42
+        + np.log1p(attempts) / 9
+        + popularity / 24
+        - recent_failures / 4.8
+        - np.maximum(tag_count - 2, 0) * 0.14
+    )
+    return np.clip(1 / (1 + np.exp(-logit)), 0.02, 0.98)
+
+
 def _contest_feature_importance(model: Any) -> pd.DataFrame:
     if isinstance(model, RandomForestClassifier):
         importance = model.feature_importances_
@@ -321,6 +349,11 @@ def _solve_feature_importance(model: Any) -> pd.DataFrame:
     else:
         importance = np.ones(len(SOLVE_FEATURE_COLUMNS))
     return _importance_frame(SOLVE_FEATURE_COLUMNS, importance)
+
+
+def _scorecard_feature_importance() -> pd.DataFrame:
+    weights = np.array([0.28, 0.18, 0.28, 0.2, 0.08, 0.16, 0.06, 0.04, 0.1])
+    return _importance_frame(SOLVE_FEATURE_COLUMNS, weights)
 
 
 def _importance_frame(features: list[str], importance: np.ndarray) -> pd.DataFrame:

@@ -122,10 +122,10 @@ def render_sidebar() -> None:
 def render_profile(result) -> None:
     profile = result.profile
     cols = st.columns(4)
-    metric_card(cols[0], "Problems solved", f"{profile['problems_solved']}", "unique accepted problems")
-    metric_card(cols[1], "Average rating", f"{profile['average_rating']}", "solved problem rating")
-    metric_card(cols[2], "Wrong submissions", f"{profile['wrong_submissions']}", "WA/TLE/runtime/compile")
-    metric_card(cols[3], "Next contest band", result.contest_model["predicted_band"], result.contest_model["selected_model_name"])
+    metric_card(cols[0], "Current rating", f"{profile['current_rating']}", "official Codeforces rating")
+    metric_card(cols[1], "Max rating", f"{profile['max_rating']}", "peak Codeforces rating")
+    metric_card(cols[2], "Solved", f"{profile['problems_solved']}", "unique accepted problems")
+    metric_card(cols[3], "Recent accuracy", f"{profile['recent_accuracy']}%", "last 80 submissions")
 
     left, right = st.columns([1.45, 1])
     with left:
@@ -168,7 +168,7 @@ def render_profile(result) -> None:
 
     left, right = st.columns(2)
     with left:
-        panel_title("Rating-wise accuracy", "attempts by difficulty bucket")
+        panel_title("Rating-wise accuracy", "success rate by official or estimated problem rating")
         frame = result.rating_accuracy.copy()
         if not frame.empty:
             fig = go.Figure()
@@ -189,7 +189,7 @@ def render_profile(result) -> None:
             st.info("No rating data available.")
 
     with right:
-        panel_title("Solved difficulty distribution", "unique accepted problems")
+        panel_title("Solved difficulty distribution", "where accepted problems cluster")
         frame = result.solved_difficulty
         if not frame.empty:
             fig = px.bar(frame, x="rating_bucket", y="solved", color_discrete_sequence=["#5ee0a0"])
@@ -214,17 +214,28 @@ def render_weakness(result) -> None:
             [
                 "tag",
                 "level",
-                "ml_level",
                 "attempts",
                 "accuracy",
-                "avg_rating_solved",
+                "max_rating_solved",
                 "recent_failures",
                 "priority_score",
                 "next_action",
             ]
         ].copy()
         show["accuracy"] = show["accuracy"].round(1)
-        show["avg_rating_solved"] = show["avg_rating_solved"].round(0)
+        show["max_rating_solved"] = show["max_rating_solved"].round(0)
+        show = show.rename(
+            columns={
+                "tag": "Tag",
+                "level": "Level",
+                "attempts": "Attempts",
+                "accuracy": "Accuracy %",
+                "max_rating_solved": "Hardest solved",
+                "recent_failures": "Recent fails",
+                "priority_score": "Repair priority",
+                "next_action": "Next action",
+            }
+        )
         st.dataframe(show, width="stretch", height=520)
 
     with right:
@@ -282,6 +293,7 @@ def render_recommendations(result) -> None:
                 "problem_id",
                 "name",
                 "rating",
+                "rating_source",
                 "tags",
                 "solve_probability_pct",
                 "tag_similarity",
@@ -298,6 +310,7 @@ def render_recommendations(result) -> None:
             hide_index=True,
             column_config={
                 "open": st.column_config.LinkColumn("Open", display_text="Codeforces"),
+                "rating_source": st.column_config.TextColumn("Rating source"),
                 "solve_probability_pct": st.column_config.NumberColumn("Solve %", format="%.1f%%"),
                 "tag_similarity": st.column_config.NumberColumn("Tag fit", format="%.2f"),
                 "rank_score": st.column_config.NumberColumn("Rank score", format="%.3f"),
@@ -310,7 +323,7 @@ def render_recommendations(result) -> None:
     else:
         frame = result.similar_harder.copy()
         frame["open"] = frame.apply(_codeforces_problem_url, axis=1)
-        frame = frame[["open", "problem_id", "name", "rating", "tags", "semantic_score", "solved_count"]].copy()
+        frame = frame[["open", "problem_id", "name", "rating", "rating_source", "tags", "semantic_score", "solved_count"]].copy()
         frame["tags"] = frame["tags"].apply(_format_tags)
         frame["semantic_score"] = frame["semantic_score"].round(3)
         st.dataframe(
@@ -319,21 +332,54 @@ def render_recommendations(result) -> None:
             hide_index=True,
             column_config={
                 "open": st.column_config.LinkColumn("Open", display_text="Codeforces"),
+                "rating_source": st.column_config.TextColumn("Rating source"),
                 "semantic_score": st.column_config.NumberColumn("Similarity", format="%.3f"),
             },
         )
 
 
 def render_probability(result) -> None:
-    weak_tags = result.weakness["tag"].head(12).tolist()
     left, right = st.columns([0.9, 1.1])
     with left:
-        panel_title("Custom problem", "interactive solve probability model")
-        rating = st.slider("Problem rating", min_value=800, max_value=2600, value=int(result.profile["current_rating"] + 200), step=100)
-        tags = st.multiselect("Problem tags", options=sorted(result.tag_stats["tag"].unique()), default=weak_tags[:2])
-        recent_failures = st.slider("Recent failures on similar tags", 0, 20, 4)
-        solved_count = st.number_input("Problem popularity / solved count", min_value=0, max_value=100000, value=4500, step=100)
-        name = st.text_input("Problem name", value="Custom training target")
+        panel_title("Problem lookup", "enter Codeforces code like 1900C or 1497E2")
+        default_code = _default_problem_code(result)
+        problem_code = st.text_input("Codeforces problem code", value=default_code)
+        problem = _find_problem_by_code(result.problems, problem_code)
+
+        if problem is not None:
+            rating = int(problem["rating"])
+            tags = list(problem["tags"] or [])
+            solved_count = int(problem["solved_count"])
+            name = str(problem["name"])
+            rating_source = str(problem.get("rating_source", "official"))
+            st.markdown(
+                f"""
+                <div class="rule-list">
+                  <p><strong>{problem['problem_id']} - {name}</strong></p>
+                  <p>Rating: <strong>{rating}</strong> ({rating_source})</p>
+                  <p>Solved by: <strong>{solved_count}</strong> users</p>
+                  <p>Tags: {_format_tags(tags) or "untagged"}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            if rating_source == "estimated":
+                st.info("This problem has no official Codeforces rating, so AlgoRadar estimated it from problem index and solved count.")
+        else:
+            st.warning("Problem code not found in the Codeforces problemset cache. Use manual fallback below.")
+            with st.expander("Manual fallback", expanded=True):
+                rating = st.slider("Estimated problem rating", min_value=800, max_value=3500, value=int(result.profile["current_rating"] + 200), step=100)
+                tags = st.multiselect("Problem tags", options=sorted(result.tag_stats["tag"].unique()), default=result.weakness["tag"].head(2).tolist())
+                solved_count = st.number_input("Problem solved count", min_value=0, max_value=200000, value=4500, step=100)
+                name = st.text_input("Problem name", value="Custom training target")
+
+        recent_failures = st.slider(
+            "Recent failures on these tags",
+            0,
+            20,
+            _default_recent_failures(tags, result.weakness),
+            help="This measures recent drag from similar topics, not global failure count.",
+        )
         score = score_custom_problem(
             rating=rating,
             tags=tags,
@@ -433,7 +479,12 @@ def render_progress(result) -> None:
     metric_card(cols[0], "Latest solves", str(int(latest["solved"])), "accepted submissions")
     metric_card(cols[1], "Attempts", str(int(latest["attempts"])), "latest week")
     metric_card(cols[2], "Accuracy", f"{latest['accuracy']:.1f}%", "latest week")
-    metric_card(cols[3], "Growth attempts", str(int(latest["growth_attempts"])), "1400-1900 rating")
+    metric_card(
+        cols[3],
+        "Growth attempts",
+        str(int(latest["growth_attempts"])),
+        f"{result.profile['growth_rating_low']}-{result.profile['growth_rating_high']} rating",
+    )
 
     panel_title("Progress tracking", "weekly solve volume and accuracy")
     fig = go.Figure()
@@ -503,6 +554,38 @@ def bucket_color(bucket: str) -> str:
         "stretch": "#f28b82",
         "avoid": "#6f7886",
     }.get(bucket, "#75a7ff")
+
+
+def _default_problem_code(result) -> str:
+    if not result.recommendations.empty:
+        growth = result.recommendations[result.recommendations["bucket"] == "growth"]
+        source = growth if not growth.empty else result.recommendations
+        return str(source.iloc[0]["problem_id"])
+    return "1900C"
+
+
+def _find_problem_by_code(problems: pd.DataFrame, code: str) -> pd.Series | None:
+    normalized = _normalize_problem_code(code)
+    if not normalized or problems.empty:
+        return None
+    matches = problems[problems["problem_id"].astype(str).str.upper() == normalized]
+    if matches.empty:
+        return None
+    return matches.iloc[0]
+
+
+def _normalize_problem_code(code: str) -> str:
+    return "".join(str(code or "").upper().split())
+
+
+def _default_recent_failures(tags: list[str], weakness: pd.DataFrame) -> int:
+    if not tags or weakness.empty:
+        return 0
+    lookup = weakness.set_index("tag")["recent_failures"].to_dict()
+    values = [float(lookup.get(tag, 0)) for tag in tags]
+    if not values:
+        return 0
+    return int(max(0, min(20, round(sum(values) / len(values)))))
 
 
 def _format_tags(tags) -> str:

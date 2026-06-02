@@ -74,6 +74,19 @@ AlgoRadar runs this pipeline:
 
 The app uses live Codeforces data by default. If the API is unavailable, the backend has a reproducible sample-data fallback so the pipeline can still be tested.
 
+## Metric Definitions
+
+AlgoRadar avoids treating every number as equally meaningful. The main user-facing metrics are:
+
+- **Current rating**: official latest Codeforces rating.
+- **Max rating**: official peak Codeforces rating.
+- **Recent accuracy**: accepted-submission rate across the latest 80 submissions.
+- **Rating-wise accuracy**: success rate grouped by official or estimated problem rating.
+- **Hardest solved**: highest-rated accepted problem for a tag.
+- **Repair priority**: a weakness score based on low accuracy, recent failures, and attempt volume.
+- **Solve probability**: a monotonic scorecard estimate. If the same user, tags, solved count, and recent-failure context stay fixed, increasing the problem rating cannot increase the probability.
+- **Rating source**: `official` means Codeforces provides the problem rating; `estimated` means AlgoRadar inferred it from problem index and solved count.
+
 ## Setup
 
 ### 1. Clone the Repository

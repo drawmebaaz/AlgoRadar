@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from algoradar.features import submissions_to_frame, tag_feature_frame
+from algoradar.features import problemset_to_frame, submissions_to_frame, tag_feature_frame
 from algoradar.models import train_contest_score_predictor
 from algoradar.pipeline import run_analysis
 from algoradar.recommender import score_custom_problem
@@ -44,6 +44,35 @@ def test_custom_problem_probability_is_bucketed() -> None:
 
     assert 0 <= score["solve_probability"] <= 1
     assert score["bucket"] in {"confidence", "growth", "stretch", "avoid"}
+
+
+def test_problem_rating_is_estimated_when_codeforces_rating_is_missing() -> None:
+    problems = [{"contestId": 1900, "index": "C", "name": "Unrated C", "tags": ["dp"]}]
+    stats = [{"contestId": 1900, "index": "C", "solvedCount": 750}]
+
+    frame = problemset_to_frame(problems, stats)
+
+    assert frame.iloc[0]["rating_source"] == "estimated"
+    assert 800 <= frame.iloc[0]["rating"] <= 3500
+
+
+def test_solve_probability_decreases_as_problem_rating_increases() -> None:
+    result = run_analysis("monotonic_test", prefer_transformer=False, submission_limit=600, use_sample=True)
+    scores = [
+        score_custom_problem(
+            rating=rating,
+            tags=["dp", "greedy"],
+            solved_count=5000,
+            name=f"Rating {rating}",
+            profile=result.profile,
+            tag_stats=result.weakness,
+            solve_model_report=result.solve_model,
+            recent_failures=3,
+        )["solve_probability"]
+        for rating in [1200, 1600, 2000, 2400]
+    ]
+
+    assert scores == sorted(scores, reverse=True)
 
 
 def test_contest_predictor_handles_imbalanced_training_bands() -> None:
