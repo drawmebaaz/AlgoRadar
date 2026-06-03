@@ -14,7 +14,7 @@ The goal is not just to show charts. AlgoRadar includes a real ML pipeline where
 - CodeChef profile, rating trend, weakness signals, and rating-band recommendations
 - Combined cross-platform summary when at least two handles are provided
 - Combined weakness/focus map
-- Combined practice queue
+- Platform-separated practice queues
 - Rating-wise accuracy
 - Tag-wise accuracy
 - Most failed tags

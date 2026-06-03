@@ -123,7 +123,7 @@ def main() -> None:
           <div>
             <p class="eyebrow">AlgoRadar / Multi-platform competitive programming intelligence</p>
             <h1>{hero_title}</h1>
-            <p class="subcopy">Add any combination of Codeforces, CodeChef, and LeetCode handles. Platform sections stay focused; recommendations and solve probability combine the handles you provide.</p>
+            <p class="subcopy">Add any combination of Codeforces, CodeChef, and LeetCode handles. Platform sections stay focused; recommendations are separated by platform, and solve probability uses the handles you provide.</p>
           </div>
           <div class="source-pill">{source_label}</div>
         </div>
@@ -144,7 +144,7 @@ def main() -> None:
     elif screen == "LeetCode":
         render_platform_detail(external_results.get("leetcode"), "LeetCode")
     elif screen == "Recommendations":
-        render_combined_recommendations(result, external_results)
+        render_combined_recommendations(result, external_results, active_args)
     elif screen == "Solve probability":
         render_general_probability(result, external_results, active_args)
 
@@ -522,22 +522,83 @@ def render_codechef_detail(analysis) -> None:
         st.dataframe(show, width="stretch", hide_index=True)
 
 
-def render_combined_recommendations(result, external_results: dict) -> None:
+def render_combined_recommendations(result, external_results: dict, active_args: dict[str, str]) -> None:
     overview = build_combined_overview(result, external_results)
     recommendations = overview["recommendations"]
     cols = st.columns(4)
     if recommendations.empty:
         metric_card(cols[0], "Recommendations", "0", "add handles first")
-        st.info("No recommendation queues are available yet.")
+        metric_card(cols[1], "Codeforces", "0", "confidence/growth/stretch")
+        metric_card(cols[2], "CodeChef", "0", "confidence/growth/stretch")
+        metric_card(cols[3], "LeetCode", "0", "confidence/growth/stretch")
+    else:
+        counts = recommendations["bucket"].value_counts().to_dict()
+        metric_card(cols[0], "Confidence", str(counts.get("confidence", 0)), "warm-up problems")
+        metric_card(cols[1], "Growth", str(counts.get("growth", 0)), "main training queue")
+        metric_card(cols[2], "Stretch", str(counts.get("stretch", 0)), "harder attempts")
+        metric_card(cols[3], "Platforms", str(recommendations["platform"].nunique()), "sources in queue")
+
+    panel_title("Platform practice queues", "recommendations separated by platform and training bucket")
+    tabs = st.tabs(["Codeforces", "CodeChef", "LeetCode"])
+    for tab, platform in zip(tabs, ["Codeforces", "CodeChef", "LeetCode"]):
+        with tab:
+            _render_platform_recommendation_group(platform, recommendations, result, external_results, active_args)
+
+
+def _render_platform_recommendation_group(
+    platform: str,
+    recommendations: pd.DataFrame,
+    result,
+    external_results: dict,
+    active_args: dict[str, str],
+) -> None:
+    status = _recommendation_platform_status(platform, result, external_results, active_args)
+    if status:
+        st.info(status)
         return
-    counts = recommendations["bucket"].value_counts().to_dict()
+
+    frame = recommendations[recommendations["platform"] == platform].copy() if not recommendations.empty else pd.DataFrame()
+    if frame.empty:
+        st.info(f"No {platform} recommendations are available yet.")
+        return
+
+    counts = frame["bucket"].value_counts().to_dict()
+    cols = st.columns(4)
     metric_card(cols[0], "Confidence", str(counts.get("confidence", 0)), "warm-up problems")
     metric_card(cols[1], "Growth", str(counts.get("growth", 0)), "main training queue")
     metric_card(cols[2], "Stretch", str(counts.get("stretch", 0)), "harder attempts")
-    metric_card(cols[3], "Platforms", str(recommendations["platform"].nunique()), "sources in queue")
+    metric_card(cols[3], "Total", str(len(frame)), f"{platform} queue")
 
-    panel_title("Unified practice queue", "Codeforces ML + LeetCode topic fit + CodeChef rating bands")
-    _show_recommendations_table(recommendations)
+    bucket_order = [
+        ("confidence", "Confidence builders", "problems that should feel controlled"),
+        ("growth", "Growth problems", "main practice targets"),
+        ("stretch", "Stretch problems", "harder attempts for expansion"),
+        ("avoid", "Avoid for now", "come back after stronger prep"),
+    ]
+    bucket_tabs = st.tabs([label for bucket, label, _ in bucket_order if bucket in counts or bucket != "avoid"])
+    visible_buckets = [(bucket, label, subtitle) for bucket, label, subtitle in bucket_order if bucket in counts or bucket != "avoid"]
+    for bucket_tab, (bucket, label, subtitle) in zip(bucket_tabs, visible_buckets):
+        with bucket_tab:
+            bucket_frame = frame[frame["bucket"] == bucket].copy()
+            panel_title(label, subtitle)
+            if bucket_frame.empty:
+                st.info(f"No {bucket} {platform} recommendations found right now.")
+                continue
+            _show_recommendations_table(bucket_frame, show_platform=False, show_bucket=False)
+
+
+def _recommendation_platform_status(platform: str, result, external_results: dict, active_args: dict[str, str]) -> str:
+    key = {"Codeforces": "codeforces", "CodeChef": "codechef", "LeetCode": "leetcode"}[platform]
+    if not active_args.get(key):
+        return f"Add your {platform} handle in the sidebar, then click Analyze handles."
+    if platform == "Codeforces":
+        return "" if result is not None else "Codeforces analysis is not loaded yet. Click Analyze handles."
+    analysis = external_results.get(key)
+    if analysis is None:
+        return f"{platform} analysis is not loaded yet. Click Analyze handles."
+    if analysis.status != "ok":
+        return f"{platform} could not be loaded: {analysis.error or analysis.status}"
+    return ""
 
 
 def render_general_probability(result, external_results: dict, active_args: dict[str, str]) -> None:
@@ -945,7 +1006,7 @@ def render_progress(result) -> None:
     st.plotly_chart(fig, width="stretch")
 
 
-def _show_recommendations_table(recommendations: pd.DataFrame) -> None:
+def _show_recommendations_table(recommendations: pd.DataFrame, show_platform: bool = True, show_bucket: bool = True) -> None:
     if recommendations is None or recommendations.empty:
         st.info("No recommendations available for this profile yet.")
         return
@@ -961,19 +1022,24 @@ def _show_recommendations_table(recommendations: pd.DataFrame) -> None:
     if "difficulty" in frame.columns:
         frame["difficulty"] = frame["difficulty"].astype(str)
 
-    columns = [
-        "platform",
-        "bucket",
-        "problem_id",
-        "title",
-        "difficulty",
-        "tags",
-        "solve_probability_pct",
-        "acceptance_rate",
-        "rank_score",
-        "url",
-        "reason",
-    ]
+    columns = []
+    if show_platform:
+        columns.append("platform")
+    if show_bucket:
+        columns.append("bucket")
+    columns.extend(
+        [
+            "problem_id",
+            "title",
+            "difficulty",
+            "tags",
+            "solve_probability_pct",
+            "acceptance_rate",
+            "rank_score",
+            "url",
+            "reason",
+        ]
+    )
     frame = frame[[column for column in columns if column in frame.columns]]
     st.dataframe(
         frame,
