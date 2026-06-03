@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import pandas as pd
 
 from algoradar import platforms
-from algoradar.user_profiles import load_profiles, save_profile
 
 
 def test_external_platforms_skip_blank_handles() -> None:
@@ -159,18 +158,3 @@ def test_combined_overview_accepts_codeforces_and_external() -> None:
     assert overview["summary"]["platforms_connected"] == 2
     assert not overview["focus"].empty
 
-
-def test_saved_profiles_round_trip(tmp_path) -> None:
-    path = tmp_path / "profiles.json"
-    name = save_profile(
-        " Unit Profile ",
-        {"codeforces": "cf", "leetcode": "lc", "codechef": "cc"},
-        path=path,
-    )
-
-    profiles = load_profiles(path)
-
-    assert name == "Unit Profile"
-    assert profiles["Unit Profile"]["codeforces"] == "cf"
-    assert profiles["Unit Profile"]["leetcode"] == "lc"
-    assert profiles["Unit Profile"]["codechef"] == "cc"

@@ -47,7 +47,6 @@ class AnalysisResult:
     recommendations: pd.DataFrame
     semantic_method: str
     similar_harder: pd.DataFrame
-    roadmap: pd.DataFrame
     progress: pd.DataFrame
 
 
@@ -108,25 +107,8 @@ def run_analysis(
         recommendations=recommendations,
         semantic_method=semantic_index.method,
         similar_harder=similar_harder,
-        roadmap=build_weekly_roadmap(weakness, recommendations),
         progress=build_progress_frame(submissions, profile),
     )
-
-
-def build_weekly_roadmap(weakness: pd.DataFrame, recommendations: pd.DataFrame) -> pd.DataFrame:
-    focus_tags = weakness.head(5)["tag"].tolist() if not weakness.empty else ["implementation", "math", "greedy"]
-    growth_count = int((recommendations["bucket"] == "growth").sum()) if not recommendations.empty else 0
-    stretch_count = int((recommendations["bucket"] == "stretch").sum()) if not recommendations.empty else 0
-    days = [
-        ("Mon", "Calibration", f"2 confidence problems, tag audit: {focus_tags[0] if focus_tags else 'implementation'}", 42),
-        ("Tue", "Weakness drill", f"Focused practice on {focus_tags[1] if len(focus_tags) > 1 else focus_tags[0]}", 68),
-        ("Wed", "Growth queue", f"{max(2, growth_count // 3)} growth problems with notes", 58),
-        ("Thu", "Contest sim", "A-C sprint, 90 minutes, no editorials", 74),
-        ("Fri", "Repair block", f"Review failures in {focus_tags[2] if len(focus_tags) > 2 else focus_tags[0]}", 62),
-        ("Sat", "Stretch work", f"{max(1, stretch_count // 2)} stretch attempts plus upsolve", 82),
-        ("Sun", "Review", "Progress log, flashcards, next queue pruning", 35),
-    ]
-    return pd.DataFrame(days, columns=["day", "theme", "focus", "load"])
 
 
 def build_progress_frame(submissions: pd.DataFrame, profile: dict[str, Any] | None = None) -> pd.DataFrame:

@@ -284,14 +284,12 @@ def build_combined_overview(
         "platforms_connected": platforms_connected,
         "attention_platform": attention_platform,
     }
-    roadmap = _combined_roadmap(focus, recommendations)
     return {
         "summary": summary,
         "platforms": platform_rows,
         "focus": focus.sort_values("priority", ascending=False).reset_index(drop=True) if not focus.empty else focus,
         "trend": trend,
         "recommendations": recommendations,
-        "roadmap": roadmap,
     }
 
 
@@ -1150,27 +1148,6 @@ def _platform_summary_row(analysis: PlatformAnalysis) -> dict[str, Any]:
         "accuracy": accuracy,
         "signal": signal,
     }
-
-
-def _combined_roadmap(focus: pd.DataFrame, recommendations: pd.DataFrame) -> pd.DataFrame:
-    top_focus = focus.head(4).to_dict("records") if not focus.empty else []
-
-    def focus_label(index: int, fallback: str) -> str:
-        if index < len(top_focus):
-            return f"{top_focus[index]['platform']}: {top_focus[index]['area']}"
-        return fallback
-
-    rec_counts = recommendations["platform"].value_counts().to_dict() if not recommendations.empty else {}
-    rows = [
-        ("Mon", "Codeforces repair", focus_label(0, "Codeforces weak tag drill"), 68),
-        ("Tue", "LeetCode pattern", focus_label(1, "LeetCode core pattern coverage"), 58),
-        ("Wed", "CodeChef rating band", "2 confidence + 1 growth CodeChef problem", 54),
-        ("Thu", "Mixed growth queue", f"{int(rec_counts.get('Codeforces', 0) + rec_counts.get('LeetCode', 0))} cross-platform options ready", 72),
-        ("Fri", "Contest simulation", "90-minute A-C/Medium sprint with notes", 78),
-        ("Sat", "Stretch attempt", focus_label(2, "One harder problem with upsolve"), 82),
-        ("Sun", "Review", "Refresh caches, update profile, prune solved recommendations", 35),
-    ]
-    return pd.DataFrame(rows, columns=["day", "theme", "focus", "load"])
 
 
 def _attention_platform(platform_rows: pd.DataFrame, focus: pd.DataFrame) -> str:

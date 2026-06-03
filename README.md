@@ -2,17 +2,17 @@
 
 **AlgoRadar | AI Competitive Programming Weakness Analyzer and Problem Recommender**
 
-AlgoRadar is a machine-learning powered competitive programming intelligence dashboard for Codeforces, CodeChef, and LeetCode. A user can save their platform handles as a personal profile, reopen that profile later, and get cached platform analytics, weakness signals, recommendations, and a combined weekly practice plan.
+AlgoRadar is a machine-learning powered competitive programming intelligence dashboard for Codeforces, CodeChef, and LeetCode. A user enters any combination of the three handles, and the app returns platform-wise analytics, weakness signals, recommendations, and solve-probability estimates from the handles provided.
 
 The goal is not just to show charts. AlgoRadar includes a real ML pipeline where the platform data supports it: API ingestion, data cleaning, feature engineering, baseline rules, train/test split, model metrics, problem ranking, and semantic similarity search. Codeforces has the deepest model because its official API exposes verdict-level submissions. LeetCode and CodeChef are normalized into the same product experience using their public profile, contest, topic, and practice-problem data.
 
 ## Features
 
-- Saved personal profile with Codeforces, CodeChef, and LeetCode handles
+- Optional Codeforces, CodeChef, and LeetCode handle inputs
 - Live Codeforces handle analysis
 - LeetCode profile, difficulty, topic, contest, and recommendation analysis
 - CodeChef profile, rating trend, weakness signals, and rating-band recommendations
-- Combined cross-platform summary
+- Combined cross-platform summary when at least two handles are provided
 - Combined weakness/focus map
 - Combined practice queue
 - Rating-wise accuracy
@@ -27,21 +27,17 @@ The goal is not just to show charts. AlgoRadar includes a real ML pipeline where
 - Problem solve-probability model
 - Confidence/growth/stretch recommendation queues
 - Similar-but-harder problem retrieval
-- Weekly practice roadmap
 - Progress tracking
 - Premium dark Streamlit UI
 
 ## Screens
 
 1. Combined analysis
-2. Codeforces deep analytics
-3. CodeChef analysis
-4. LeetCode analysis
-5. Combined recommendations
-6. Codeforces weakness map
-7. Codeforces solve probability
-8. Weekly roadmap
-9. Progress tracking
+2. Codeforces
+3. CodeChef
+4. LeetCode
+5. Recommendations
+6. Solve probability
 
 ## Tech Stack
 
@@ -66,7 +62,7 @@ The goal is not just to show charts. AlgoRadar includes a real ML pipeline where
 | Level 3 | Solve Probability Model | classification, probability buckets, feature importance |
 | Level 4 | Problem Recommender | ranking, personalization, content-based recommendation |
 | Level 5 | Similar Problem Finder | vector search, semantic similarity, nearest-neighbor retrieval |
-| Level 6 | Final AlgoRadar | complete ML product with dashboard, recommendations, roadmap, and progress tracking |
+| Level 6 | Final AlgoRadar | complete ML product with dashboard, recommendations, solve probability, and progress tracking |
 
 ## How It Works
 
@@ -80,7 +76,7 @@ AlgoRadar runs this pipeline:
 6. Classify weakness using simple rules first.
 7. Train a random forest weakness model and compare it with the rule baseline for Codeforces.
 8. Train a next-contest performance band predictor.
-9. Train a solve-probability model from user/problem features where verdict-level data is available.
+9. Estimate solve probability from solved volume and solved-rating strength on relevant tags, using all provided handles where possible.
 10. Rank problems into confidence, growth, and stretch buckets.
 11. Build a similar-problem search layer using TF-IDF by default.
 
@@ -96,7 +92,7 @@ AlgoRadar avoids treating every number as equally meaningful. The main user-faci
 - **Rating-wise accuracy**: success rate grouped by official or estimated problem rating.
 - **Hardest solved**: highest-rated accepted problem for a tag.
 - **Repair priority**: a weakness score based on low accuracy, recent failures, and attempt volume.
-- **Solve probability**: a monotonic scorecard estimate. AlgoRadar looks up the problem and automatically uses your recent failures on its tags. If the same user, tags, and solved count stay fixed, increasing the problem rating cannot increase the probability.
+- **Solve probability**: a scorecard estimate that prioritizes solved volume, hardest solved rating, and average solved rating on the selected tags. Accuracy is intentionally not a primary signal because accepted submissions can be distorted by AI/editorial help.
 - **Rating source**: `official` means Codeforces provides the problem rating; `estimated` means AlgoRadar inferred it from problem index and solved count.
 - **LeetCode topic weakness**: coverage-based signal from public solved topic counters. LeetCode does not expose full public verdict history for every solved/failed problem.
 - **CodeChef weakness**: rating-history and practice-volume signal from the public profile. CodeChef public solved profiles do not expose reliable tag-level verdict history.
@@ -182,7 +178,7 @@ Then open the local URL shown in the terminal. It is usually:
 http://localhost:8501
 ```
 
-Enter one or more platform handles, click **Analyze profile**, and optionally click **Save personal profile** to reuse the same handles later.
+Enter one or more platform handles and click **Analyze handles**. Missing handles are allowed; the related platform section will ask you to add that handle first.
 
 ## Run the ML Pipeline from Terminal
 
@@ -326,13 +322,14 @@ AlgoRadar/
     recommender.py               Problem ranking and recommendation logic
     sample_data.py               Reproducible fallback data
     semantic.py                  TF-IDF / MiniLM similar-problem retrieval
-    user_profiles.py             Saved local handle profiles
+    solve_probability.py         Cross-platform solve-probability scorecard
     weakness.py                  Rule baseline and ML weakness classifier
   scripts/
     run_analysis.py              CLI pipeline runner
   tests/
     test_pipeline.py             Smoke tests for the ML pipeline
     test_platforms.py            Non-network tests for platform normalization
+    test_solve_probability.py    Cross-platform probability scorecard tests
   data/
     cache/                       Cached API responses
     models/                      Trained local model reports

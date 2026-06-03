@@ -7,8 +7,11 @@ import streamlit as st
 
 from algoradar import run_analysis
 from algoradar.platforms import analyze_external_platforms, build_combined_overview
-from algoradar.recommender import score_custom_problem
-from algoradar.user_profiles import load_profiles, save_profile
+from algoradar.solve_probability import (
+    available_probability_tags,
+    score_saved_profile_problem,
+    target_rating_from_difficulty,
+)
 
 st.set_page_config(
     page_title="AlgoRadar",
@@ -41,82 +44,54 @@ def cached_external_analysis(leetcode_handle: str, codechef_handle: str, force_r
 def main() -> None:
     inject_css()
     render_sidebar()
-    profiles = load_profiles()
-    _initialize_profile_state(profiles)
 
     with st.sidebar:
-        if profiles:
-            selected_profile = st.selectbox("Saved profile", ["Manual"] + sorted(profiles), index=0)
-            if st.button("Load saved profile", width="stretch", disabled=selected_profile == "Manual"):
-                handles = profiles[selected_profile]
-                st.session_state.profile_name_input = selected_profile
-                st.session_state.cf_handle_input = handles.get("codeforces", "")
-                st.session_state.leetcode_handle_input = handles.get("leetcode", "")
-                st.session_state.codechef_handle_input = handles.get("codechef", "")
-                st.rerun()
-
-        st.text_input("Profile name", key="profile_name_input", help="Save your platform handles under this name.")
-        handle = st.text_input("Codeforces handle", key="cf_handle_input", help="Optional. Enables the deepest ML pipeline.")
-        leetcode_handle = st.text_input("LeetCode username", key="leetcode_handle_input", help="Optional public LeetCode profile.")
-        codechef_handle = st.text_input("CodeChef handle", key="codechef_handle_input", help="Optional public CodeChef profile.")
-
-        save_clicked = st.button("Save personal profile", width="stretch")
+        codeforces_handle = st.text_input("Codeforces handle", key="codeforces_handle_input", help="Optional. Enables the deepest verdict-level ML analysis.")
+        codechef_handle = st.text_input("CodeChef handle", key="codechef_handle_input", help="Optional. Enables CodeChef rating and practice analysis.")
+        leetcode_handle = st.text_input("LeetCode username", key="leetcode_handle_input", help="Optional. Enables LeetCode topic and contest analysis.")
+        analyze = st.button("Analyze handles", width="stretch")
         force_refresh = st.toggle("Refresh platform caches", value=False)
         prefer_transformer = st.toggle(
             "Use MiniLM embeddings",
             value=False,
             help="If sentence-transformers is installed, this uses all-MiniLM-L6-v2. Otherwise the app uses TF-IDF fallback.",
         )
-        analyze = st.button("Analyze profile", width="stretch")
 
+        if "screen" not in st.session_state:
+            st.session_state.screen = "Combined analysis"
         screen = st.radio(
-            "Screens",
+            "Sections",
             [
-                "1. Combined analysis",
-                "2. Codeforces deep analytics",
-                "3. CodeChef analysis",
-                "4. LeetCode analysis",
-                "5. Combined recommendations",
-                "6. Codeforces weakness map",
-                "7. Codeforces solve probability",
-                "8. Weekly roadmap",
-                "9. Progress tracking",
+                "Combined analysis",
+                "Codeforces",
+                "CodeChef",
+                "LeetCode",
+                "Recommendations",
+                "Solve probability",
             ],
+            key="screen",
         )
 
     current_args = {
-        "profile_name": st.session_state.profile_name_input.strip() or "My profile",
-        "codeforces": handle.strip(),
+        "codeforces": codeforces_handle.strip(),
         "leetcode": leetcode_handle.strip(),
         "codechef": codechef_handle.strip(),
         "force_refresh": force_refresh,
         "prefer_transformer": prefer_transformer,
     }
-
-    if save_clicked:
-        saved_name = save_profile(
-            current_args["profile_name"],
-            {
-                "codeforces": current_args["codeforces"],
-                "leetcode": current_args["leetcode"],
-                "codechef": current_args["codechef"],
-            },
-        )
-        st.sidebar.success(f"Saved {saved_name}.")
-
-    if "active_profile_args" not in st.session_state:
-        st.session_state.active_profile_args = current_args
+    if "active_handle_args" not in st.session_state:
+        st.session_state.active_handle_args = current_args
     if analyze:
-        st.session_state.active_profile_args = current_args
+        st.session_state.active_handle_args = current_args
         cached_analysis.clear()
         cached_external_analysis.clear()
 
-    active_args = st.session_state.active_profile_args
+    active_args = st.session_state.active_handle_args
     settings_changed = current_args != active_args
     result = None
     external_results: dict = {}
 
-    if _needs_codeforces(screen) and active_args["codeforces"]:
+    if _needs_codeforces(screen, active_args) and active_args["codeforces"]:
         cf_args = {
             "handle": active_args["codeforces"],
             "force_refresh": active_args["force_refresh"],
@@ -137,14 +112,14 @@ def main() -> None:
             )
 
     source_label = _source_label(result, external_results)
-    hero_title = active_args["profile_name"] or _fallback_profile_title(active_args)
+    hero_title = _fallback_profile_title(active_args)
     st.markdown(
         f"""
         <div class="hero">
           <div>
             <p class="eyebrow">AlgoRadar / Multi-platform competitive programming intelligence</p>
             <h1>{hero_title}</h1>
-            <p class="subcopy">Saved CP profile, platform-level analytics, combined weakness signals, problem recommendations, and weekly training plans across Codeforces, CodeChef, and LeetCode.</p>
+            <p class="subcopy">Add any combination of Codeforces, CodeChef, and LeetCode handles. Platform sections stay focused; recommendations and solve probability combine the handles you provide.</p>
           </div>
           <div class="source-pill">{source_label}</div>
         </div>
@@ -153,57 +128,33 @@ def main() -> None:
     )
 
     if settings_changed:
-        st.info("Sidebar settings changed. Click Analyze profile to run with the new handles/settings.")
+        st.info("Sidebar handles/settings changed. Click Analyze handles to run with the new values.")
 
-    if screen.startswith("1."):
-        render_combined_profile(result, external_results)
-    elif screen.startswith("2."):
+    if screen == "Combined analysis":
+        render_combined_entry(result, external_results, active_args)
+    elif screen == "Codeforces":
         if require_codeforces(result):
-            render_profile(result)
-    elif screen.startswith("3."):
+            render_codeforces_section(result)
+    elif screen == "CodeChef":
         render_platform_detail(external_results.get("codechef"), "CodeChef")
-    elif screen.startswith("4."):
+    elif screen == "LeetCode":
         render_platform_detail(external_results.get("leetcode"), "LeetCode")
-    elif screen.startswith("5."):
+    elif screen == "Recommendations":
         render_combined_recommendations(result, external_results)
-    elif screen.startswith("6."):
-        if require_codeforces(result):
-            render_weakness(result)
-    elif screen.startswith("7."):
-        if require_codeforces(result):
-            render_probability(result)
-    elif screen.startswith("8."):
-        if result is not None and not external_results:
-            render_roadmap(result)
-        else:
-            render_combined_roadmap(result, external_results)
-    elif screen.startswith("9."):
-        if require_codeforces(result):
-            render_progress(result)
+    elif screen == "Solve probability":
+        render_general_probability(result, external_results, active_args)
 
 
-def _initialize_profile_state(profiles: dict[str, dict[str, str]]) -> None:
-    if "profile_name_input" in st.session_state:
-        return
-    if profiles:
-        name = sorted(profiles)[0]
-        handles = profiles[name]
-    else:
-        name = "Demo profile"
-        handles = {"codeforces": "tourist", "leetcode": "", "codechef": ""}
-    st.session_state.profile_name_input = name
-    st.session_state.cf_handle_input = handles.get("codeforces", "")
-    st.session_state.leetcode_handle_input = handles.get("leetcode", "")
-    st.session_state.codechef_handle_input = handles.get("codechef", "")
-
-
-def _needs_codeforces(screen: str) -> bool:
-    return screen.startswith(("1.", "2.", "5.", "6.", "7.", "8.", "9."))
+def _needs_codeforces(screen: str, active_args: dict[str, str]) -> bool:
+    if screen == "Combined analysis":
+        return _provided_handle_count(active_args) >= 2
+    return screen in {"Codeforces", "Recommendations", "Solve probability"}
 
 
 def _external_handles_for_screen(screen: str, active_args: dict[str, str]) -> dict[str, str]:
-    needs_leetcode = screen.startswith(("1.", "4.", "5.", "8."))
-    needs_codechef = screen.startswith(("1.", "3.", "5.", "8."))
+    combined_ready = screen == "Combined analysis" and _provided_handle_count(active_args) >= 2
+    needs_leetcode = screen in {"LeetCode", "Recommendations", "Solve probability"} or combined_ready
+    needs_codechef = screen in {"CodeChef", "Recommendations", "Solve probability"} or combined_ready
     return {
         "leetcode": active_args["leetcode"] if needs_leetcode else "",
         "codechef": active_args["codechef"] if needs_codechef else "",
@@ -221,6 +172,9 @@ def _source_label(result, external_results: dict) -> str:
 
 
 def _fallback_profile_title(active_args: dict[str, str]) -> str:
+    provided = [value for key, value in active_args.items() if key in {"codeforces", "leetcode", "codechef"} and value]
+    if len(provided) >= 2:
+        return "Combined CP profile"
     for key in ["codeforces", "leetcode", "codechef"]:
         if active_args.get(key):
             return active_args[key]
@@ -230,8 +184,12 @@ def _fallback_profile_title(active_args: dict[str, str]) -> str:
 def require_codeforces(result) -> bool:
     if result is not None:
         return True
-    st.info("Add a Codeforces handle and click Analyze profile to use this Codeforces ML screen.")
+    st.info("Add a Codeforces handle in the sidebar, then click Analyze handles.")
     return False
+
+
+def _provided_handle_count(active_args: dict[str, str]) -> int:
+    return sum(1 for key in ["codeforces", "leetcode", "codechef"] if active_args.get(key))
 
 
 def render_sidebar() -> None:
@@ -248,6 +206,19 @@ def render_sidebar() -> None:
             """,
             unsafe_allow_html=True,
         )
+
+
+def render_combined_entry(result, external_results: dict, active_args: dict[str, str]) -> None:
+    if _provided_handle_count(active_args) < 2:
+        st.info("Add at least two handles in the sidebar to unlock combined analysis.")
+        return
+    render_combined_profile(result, external_results)
+
+
+def render_codeforces_section(result) -> None:
+    render_profile(result)
+    render_weakness(result)
+    render_progress(result)
 
 
 def render_profile(result) -> None:
@@ -344,12 +315,12 @@ def render_combined_profile(result, external_results: dict) -> None:
     metric_card(cols[3], "Priority platform", summary["attention_platform"], "highest repair signal")
 
     if platforms.empty:
-        st.info("Add at least one platform handle in the sidebar and click Analyze profile.")
+        st.info("Add handles in the sidebar, then click Analyze handles.")
         return
 
     left, right = st.columns([1.1, 1])
     with left:
-        panel_title("Platform breakdown", "saved handles and cached public-data signals")
+        panel_title("Platform breakdown", "provided handles and cached public-data signals")
         show = platforms.rename(
             columns={
                 "platform": "Platform",
@@ -414,7 +385,7 @@ def render_combined_profile(result, external_results: dict) -> None:
 
 def render_platform_detail(analysis, platform_name: str) -> None:
     if analysis is None:
-        st.info(f"Add your {platform_name} handle in the sidebar and click Analyze profile.")
+        st.info(f"Add your {platform_name} handle in the sidebar, then click Analyze handles.")
         return
     if analysis.status != "ok":
         st.warning(f"{platform_name} could not be loaded: {analysis.error or analysis.status}")
@@ -497,9 +468,6 @@ def render_leetcode_detail(analysis) -> None:
             fig.update_layout(**chart_layout(height=480), showlegend=False)
             st.plotly_chart(fig, width="stretch")
 
-    panel_title("LeetCode recommendations", "non-premium catalog ranked by weak tags and difficulty fit")
-    _show_recommendations_table(analysis.recommendations)
-
 
 def render_codechef_detail(analysis) -> None:
     profile = analysis.profile
@@ -549,9 +517,6 @@ def render_codechef_detail(analysis) -> None:
         )
         st.dataframe(show, width="stretch", hide_index=True)
 
-    panel_title("CodeChef recommendations", "practice API problems around your rating band")
-    _show_recommendations_table(analysis.recommendations)
-
 
 def render_combined_recommendations(result, external_results: dict) -> None:
     overview = build_combined_overview(result, external_results)
@@ -571,28 +536,118 @@ def render_combined_recommendations(result, external_results: dict) -> None:
     _show_recommendations_table(recommendations)
 
 
-def render_combined_roadmap(result, external_results: dict) -> None:
-    overview = build_combined_overview(result, external_results)
-    roadmap = overview["roadmap"]
-    panel_title("Weekly roadmap", "balanced across connected platforms")
-    cols = st.columns(7)
-    for col, row in zip(cols, roadmap.to_dict("records")):
-        with col:
-            st.markdown(
-                f"""
-                <div class="day-card">
-                  <code>{row['day']}</code>
-                  <h3>{row['theme']}</h3>
-                  <p>{row['focus']}</p>
-                  <div class="meter"><span style="width:{row['load']}%"></span></div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+def render_general_probability(result, external_results: dict, active_args: dict[str, str]) -> None:
+    available_platforms = [
+        platform
+        for platform, key in [("Codeforces", "codeforces"), ("CodeChef", "codechef"), ("LeetCode", "leetcode")]
+        if active_args.get(key)
+    ]
+    if not available_platforms:
+        st.info("Add at least one handle in the sidebar, then click Analyze handles.")
+        return
 
-    fig = px.bar(roadmap, x="day", y="load", color_discrete_sequence=["#f8c76f"])
-    fig.update_layout(**chart_layout())
-    st.plotly_chart(fig, width="stretch")
+    left, right = st.columns([0.95, 1.05])
+    with left:
+        panel_title("Problem context", "works with whichever handles you provided")
+        platform = st.selectbox("Problem platform", options=available_platforms)
+        tags_options = available_probability_tags(result, external_results)
+        default_tags = _default_probability_tags(result, external_results)
+
+        problem_name = "Custom training target"
+        popularity = 5000
+        if platform == "Codeforces" and result is not None:
+            default_code = _default_problem_code(result)
+            problem_code = st.text_input("Codeforces problem code", value=default_code)
+            problem = _find_problem_by_code(result.problems, problem_code)
+            if problem is not None:
+                problem_name = str(problem["name"])
+                rating = int(problem["rating"])
+                tags = list(problem["tags"] or [])
+                popularity = int(problem["solved_count"])
+                st.markdown(
+                    f"""
+                    <div class="rule-list">
+                      <p><strong>{problem['problem_id']} - {problem_name}</strong></p>
+                      <p>Rating: <strong>{rating}</strong> ({problem.get('rating_source', 'official')})</p>
+                      <p>Solved by: <strong>{popularity}</strong> users</p>
+                      <p>Tags: {_format_tags(tags) or "untagged"}</p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.warning("Problem code not found. Use manual fields below.")
+                rating, tags, popularity, problem_name = _manual_probability_inputs(platform, tags_options, default_tags)
+        else:
+            rating, tags, popularity, problem_name = _manual_probability_inputs(platform, tags_options, default_tags)
+
+        score = score_saved_profile_problem(
+            platform=platform,
+            target_rating=rating,
+            tags=tags,
+            popularity=popularity,
+            codeforces_result=result,
+            external_results=external_results,
+        )
+        st.caption("This scorecard prioritizes solved volume, hardest solved rating, and average solved rating on the selected tags. Accuracy is intentionally not a primary signal.")
+
+    with right:
+        panel_title("Solve probability", "combined handle-aware scorecard")
+        probability = score["solve_probability_pct"]
+        fig = go.Figure(
+            go.Indicator(
+                mode="gauge+number",
+                value=probability,
+                number={"suffix": "%", "font": {"color": "#eef2f6"}},
+                gauge={
+                    "axis": {"range": [0, 100], "tickcolor": "#6f7886"},
+                    "bar": {"color": bucket_color(score["bucket"])},
+                    "bgcolor": "#151922",
+                    "bordercolor": "#252b35",
+                    "steps": [
+                        {"range": [0, 25], "color": "#221719"},
+                        {"range": [25, 45], "color": "#261c17"},
+                        {"range": [45, 75], "color": "#292416"},
+                        {"range": [75, 100], "color": "#15251d"},
+                    ],
+                },
+            )
+        )
+        fig.update_layout(**chart_layout(height=360))
+        st.plotly_chart(fig, width="stretch")
+        st.markdown(f"<div class='bucket-label'>{score['bucket'].upper()}</div>", unsafe_allow_html=True)
+
+    cols = st.columns(4)
+    metric_card(cols[0], "Combined anchor", str(int(score["anchor_rating"])), "rating signal from provided handles")
+    metric_card(cols[1], "Total solved", str(int(score["total_solved"])), "across provided handles")
+    metric_card(cols[2], "Tag solves", str(int(score["tag_solved"])), "selected tags / aliases")
+    metric_card(cols[3], "Tag ceiling", str(int(score["tag_rating_ceiling"])), "hardest solved signal")
+
+    panel_title("Why this probability", "volume and rating-strength inputs")
+    st.dataframe(score["factors"], width="stretch", hide_index=True)
+
+
+def _manual_probability_inputs(platform: str, tags_options: list[str], default_tags: list[str]) -> tuple[int, list[str], int, str]:
+    problem_name = st.text_input("Problem name", value="Custom training target")
+    if platform == "LeetCode":
+        difficulty = st.selectbox("LeetCode difficulty", options=["Easy", "Medium", "Hard"], index=1)
+        rating = target_rating_from_difficulty(platform, difficulty, fallback_rating=1600)
+        st.caption(f"AlgoRadar maps {difficulty} to an internal {rating} rating for cross-platform comparison.")
+    else:
+        rating = st.slider("Problem rating", min_value=800, max_value=3500, value=1600, step=100)
+    tags = st.multiselect("Problem tags", options=tags_options, default=[tag for tag in default_tags if tag in tags_options][:3])
+    popularity = st.number_input("Solved count / popularity", min_value=0, max_value=500000, value=5000, step=100)
+    return int(rating), tags, int(popularity), problem_name
+
+
+def _default_probability_tags(result, external_results: dict) -> list[str]:
+    tags: list[str] = []
+    if result is not None and not result.weakness.empty:
+        tags.extend(str(tag) for tag in result.weakness["tag"].head(3).tolist())
+    leetcode = external_results.get("leetcode")
+    if leetcode is not None and getattr(leetcode, "status", "") == "ok" and not leetcode.weakness.empty:
+        tags.extend(str(tag) for tag in leetcode.weakness["tag"].head(3).tolist())
+    return tags or ["dp", "graphs", "greedy"]
 
 
 def render_weakness(result) -> None:
@@ -734,130 +789,6 @@ def render_recommendations(result) -> None:
         )
 
 
-def render_probability(result) -> None:
-    left, right = st.columns([0.9, 1.1])
-    with left:
-        panel_title("Problem lookup", "enter Codeforces code like 1900C or 1497E2")
-        default_code = _default_problem_code(result)
-        problem_code = st.text_input("Codeforces problem code", value=default_code)
-        problem = _find_problem_by_code(result.problems, problem_code)
-
-        if problem is not None:
-            rating = int(problem["rating"])
-            tags = list(problem["tags"] or [])
-            solved_count = int(problem["solved_count"])
-            name = str(problem["name"])
-            rating_source = str(problem.get("rating_source", "official"))
-            st.markdown(
-                f"""
-                <div class="rule-list">
-                  <p><strong>{problem['problem_id']} - {name}</strong></p>
-                  <p>Rating: <strong>{rating}</strong> ({rating_source})</p>
-                  <p>Solved by: <strong>{solved_count}</strong> users</p>
-                  <p>Tags: {_format_tags(tags) or "untagged"}</p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            if rating_source == "estimated":
-                st.info("This problem has no official Codeforces rating, so AlgoRadar estimated it from problem index and solved count.")
-        else:
-            st.warning("Problem code not found in the Codeforces problemset cache. Use manual fallback below.")
-            with st.expander("Manual fallback", expanded=True):
-                rating = st.slider("Estimated problem rating", min_value=800, max_value=3500, value=int(result.profile["current_rating"] + 200), step=100)
-                tags = st.multiselect("Problem tags", options=sorted(result.tag_stats["tag"].unique()), default=result.weakness["tag"].head(2).tolist())
-                solved_count = st.number_input("Problem solved count", min_value=0, max_value=200000, value=4500, step=100)
-                name = st.text_input("Problem name", value="Custom training target")
-
-        score = score_custom_problem(
-            rating=rating,
-            tags=tags,
-            solved_count=int(solved_count),
-            name=name,
-            profile=result.profile,
-            tag_stats=result.weakness,
-            solve_model_report=result.solve_model,
-        )
-        st.caption(
-            f"AlgoRadar inferred recent tag failures from your history: {score['recent_failures_used']}"
-        )
-
-    with right:
-        panel_title("Prediction", "classification bucket")
-        probability = score["solve_probability_pct"]
-        fig = go.Figure(
-            go.Indicator(
-                mode="gauge+number",
-                value=probability,
-                number={"suffix": "%", "font": {"color": "#eef2f6"}},
-                gauge={
-                    "axis": {"range": [0, 100], "tickcolor": "#6f7886"},
-                    "bar": {"color": bucket_color(score["bucket"])},
-                    "bgcolor": "#151922",
-                    "bordercolor": "#252b35",
-                    "steps": [
-                        {"range": [0, 25], "color": "#221719"},
-                        {"range": [25, 45], "color": "#261c17"},
-                        {"range": [45, 75], "color": "#292416"},
-                        {"range": [75, 100], "color": "#15251d"},
-                    ],
-                },
-            )
-        )
-        fig.update_layout(**chart_layout(height=360))
-        st.plotly_chart(fig, width="stretch")
-        st.markdown(f"<div class='bucket-label'>{score['bucket'].upper()}</div>", unsafe_allow_html=True)
-
-    left, right = st.columns(2)
-    with left:
-        panel_title("Solve model metrics", result.solve_model["selected_model_name"])
-        metrics = pd.DataFrame(result.solve_model["metrics"]).T.reset_index().rename(columns={"index": "model"})
-        st.dataframe(metrics.round(3), width="stretch", hide_index=True)
-    with right:
-        panel_title("Feature importance", "model interpretation")
-        st.dataframe(result.solve_model["feature_importance"].round(3), width="stretch", hide_index=True)
-
-
-def render_roadmap(result) -> None:
-    panel_title("Weekly roadmap", "adaptive plan from weakness map and recommendation queue")
-    roadmap = result.roadmap.copy()
-    cols = st.columns(7)
-    for col, row in zip(cols, roadmap.to_dict("records")):
-        with col:
-            st.markdown(
-                f"""
-                <div class="day-card">
-                  <code>{row['day']}</code>
-                  <h3>{row['theme']}</h3>
-                  <p>{row['focus']}</p>
-                  <div class="meter"><span style="width:{row['load']}%"></span></div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-    left, right = st.columns(2)
-    with left:
-        panel_title("Focus load", "weekly intensity")
-        fig = px.bar(roadmap, x="day", y="load", color_discrete_sequence=["#f8c76f"])
-        fig.update_layout(**chart_layout())
-        st.plotly_chart(fig, width="stretch")
-
-    with right:
-        panel_title("Operating rules", "keeps the ML project honest")
-        st.markdown(
-            """
-            <div class="rule-list">
-              <p><strong>Baseline first:</strong> compare every ML label with the rule classifier.</p>
-              <p><strong>Timebox:</strong> stop after 75 minutes and mark failure mode.</p>
-              <p><strong>Upsolve:</strong> every failed contest problem gets a mistake note.</p>
-              <p><strong>Measure:</strong> track accuracy, precision, recall, calibration, and overfitting.</p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-
 def render_progress(result) -> None:
     progress = result.progress
     cols = st.columns(4)
@@ -908,6 +839,8 @@ def _show_recommendations_table(recommendations: pd.DataFrame) -> None:
         frame["acceptance_rate"] = pd.to_numeric(frame["acceptance_rate"], errors="coerce")
     if "solve_probability_pct" in frame.columns:
         frame["solve_probability_pct"] = pd.to_numeric(frame["solve_probability_pct"], errors="coerce")
+    if "difficulty" in frame.columns:
+        frame["difficulty"] = frame["difficulty"].astype(str)
 
     columns = [
         "platform",
