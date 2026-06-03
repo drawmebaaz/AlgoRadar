@@ -78,6 +78,28 @@ def test_leetcode_payload_becomes_profile_and_weakness() -> None:
     assert trend.iloc[-1]["delta"] == 50
 
 
+def test_leetcode_problem_payload_extracts_tags_and_stats() -> None:
+    payload = {
+        "question": {
+            "questionFrontendId": "1",
+            "title": "Two Sum",
+            "titleSlug": "two-sum",
+            "difficulty": "Easy",
+            "isPaidOnly": False,
+            "stats": '{"totalAcceptedRaw": 12000000, "totalSubmissionRaw": 25000000, "acRate": "48.0%"}',
+            "topicTags": [{"name": "Array", "slug": "array"}, {"name": "Hash Table", "slug": "hash-table"}],
+        }
+    }
+
+    problem = platforms._leetcode_problem_from_payload(payload)
+
+    assert problem["problem_id"] == "1"
+    assert problem["difficulty"] == "Easy"
+    assert problem["tags"] == ["Array", "Hash Table"]
+    assert problem["accepted"] == 12000000
+    assert problem["acceptance_rate"] == 48.0
+
+
 def test_codechef_profile_and_history_parser() -> None:
     html = """
     <div class="rating-number">1512</div>
@@ -157,4 +179,3 @@ def test_combined_overview_accepts_codeforces_and_external() -> None:
     assert overview["summary"]["total_solved"] == 30
     assert overview["summary"]["platforms_connected"] == 2
     assert not overview["focus"].empty
-

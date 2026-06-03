@@ -24,7 +24,7 @@ The goal is not just to show charts. AlgoRadar includes a real ML pipeline where
 - Weakness classifier for every tag
 - Rule-based baseline compared with an ML classifier
 - Next-contest performance band prediction
-- Problem solve-probability model
+- Calibrated problem solve-probability model
 - Confidence/growth/stretch recommendation queues
 - Similar-but-harder problem retrieval
 - Progress tracking
@@ -76,7 +76,7 @@ AlgoRadar runs this pipeline:
 6. Classify weakness using simple rules first.
 7. Train a random forest weakness model and compare it with the rule baseline for Codeforces.
 8. Train a next-contest performance band predictor.
-9. Estimate solve probability from solved volume and solved-rating strength on relevant tags, using all provided handles where possible.
+9. Estimate solve probability from solved volume and solved-difficulty strength on relevant tags, using all provided handles where possible.
 10. Rank problems into confidence, growth, and stretch buckets.
 11. Build a similar-problem search layer using TF-IDF by default.
 
@@ -86,14 +86,17 @@ The app uses live Codeforces data by default. If the API is unavailable, the bac
 
 AlgoRadar avoids treating every number as equally meaningful. The main user-facing metrics are:
 
-- **Current rating**: official latest Codeforces rating.
-- **Max rating**: official peak Codeforces rating.
+- **Current rating**: official latest rating for that platform only.
+- **Max rating**: official peak rating for that platform only.
+- **Native rating**: a platform's own rating scale. AlgoRadar does not compare Codeforces, CodeChef, and LeetCode native ratings as equal numbers.
+- **CF-equivalent difficulty**: an internal calibrated difficulty reference used only by solve probability. CodeChef and LeetCode-style numeric difficulties are mapped through `data/platform_calibration.csv`.
 - **Recent accuracy**: accepted-submission rate across the latest 80 submissions.
 - **Rating-wise accuracy**: success rate grouped by official or estimated problem rating.
 - **Hardest solved**: highest-rated accepted problem for a tag.
 - **Repair priority**: a weakness score based on low accuracy, recent failures, and attempt volume.
-- **Solve probability**: a scorecard estimate that prioritizes solved volume, hardest solved rating, and average solved rating on the selected tags. Accuracy is intentionally not a primary signal because accepted submissions can be distorted by AI/editorial help.
+- **Solve probability**: a calibrated scorecard estimate that prioritizes solved volume, hardest solved difficulty, average solved difficulty, and the selected problem tags. Accuracy is intentionally not a primary signal because accepted submissions can be distorted by AI/editorial help.
 - **Rating source**: `official` means Codeforces provides the problem rating; `estimated` means AlgoRadar inferred it from problem index and solved count.
+- **LeetCode problem reference**: LeetCode has Easy/Medium/Hard labels, topic tags, acceptance stats, and a frontend problem number. It does not expose an official problem rating or the original contest slot through the public problem lookup, so AlgoRadar lets the user add an optional Q1-Q4 contest-slot reference when known.
 - **LeetCode topic weakness**: coverage-based signal from public solved topic counters. LeetCode does not expose full public verdict history for every solved/failed problem.
 - **CodeChef weakness**: rating-history and practice-volume signal from the public profile. CodeChef public solved profiles do not expose reliable tag-level verdict history.
 - **Combined solved**: sum of public solved-count signals across connected platforms. It is useful for progress direction, not as a perfect apples-to-apples skill rating.
@@ -331,6 +334,7 @@ AlgoRadar/
     test_platforms.py            Non-network tests for platform normalization
     test_solve_probability.py    Cross-platform probability scorecard tests
   data/
+    platform_calibration.csv     CodeChef/LeetCode difficulty to CF-equivalent calibration prior
     cache/                       Cached API responses
     models/                      Trained local model reports
 ```
@@ -348,6 +352,8 @@ AlgoRadar classifies recommended problems into:
 
 - The dashboard uses real platform data by default.
 - API responses, profile pages, and problem catalogs are cached locally to improve speed.
+- Solve probability uses `data/platform_calibration.csv` as a calibration prior, not as ground-truth solved labels. It should be retrained later with real common-user solve outcomes if you collect that dataset.
+- Codeforces problem tags are pulled from the Codeforces problemset. LeetCode problem tags are pulled automatically when you enter a problem slug or URL in Solve probability.
 - First-time LeetCode/CodeChef recommendation pulls can take a few seconds because the app builds local caches. Reopening the same handles is much faster.
 - The app analyzes the latest 2,500 Codeforces submissions for a practical balance of speed and signal.
 - The recommender prefilters the problemset before model scoring so the app stays responsive.

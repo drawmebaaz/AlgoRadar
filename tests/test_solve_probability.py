@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pandas as pd
 
 from algoradar.platforms import PlatformAnalysis
-from algoradar.solve_probability import score_saved_profile_problem
+from algoradar.solve_probability import native_to_cf_equivalent, score_saved_profile_problem
 
 
 def test_cross_platform_probability_decreases_with_rating() -> None:
@@ -51,3 +51,29 @@ def test_cross_platform_probability_uses_leetcode_tag_volume() -> None:
 
     assert strong["tag_solved"] > weak["tag_solved"]
     assert strong["solve_probability"] > weak["solve_probability"]
+
+
+def test_same_rating_codeforces_problem_is_not_overconfident() -> None:
+    cf = SimpleNamespace(
+        profile={"problems_solved": 220, "current_rating": 1200, "max_rating": 1300},
+        tag_stats=pd.DataFrame(
+            [
+                {"tag": "dp", "solved": 24, "avg_rating_solved": 1150, "max_rating_solved": 1400},
+            ]
+        ),
+    )
+
+    score = score_saved_profile_problem("Codeforces", 1200, ["dp"], 5000, cf, {})
+
+    assert score["target_cf_equivalent"] == 1200
+    assert score["solve_probability_pct"] < 75
+
+
+def test_platform_difficulty_calibration_uses_mapping_csv() -> None:
+    codechef = native_to_cf_equivalent("CodeChef", native_rating=1450)
+    leetcode_medium = native_to_cf_equivalent("LeetCode", leetcode_difficulty="Medium")
+    leetcode_q4 = native_to_cf_equivalent("LeetCode", leetcode_difficulty="Hard", leetcode_contest_slot="Q4")
+
+    assert codechef["cf_equivalent"] == 1200
+    assert 1100 <= leetcode_medium["cf_equivalent"] <= 1500
+    assert leetcode_q4["cf_equivalent"] >= 1900

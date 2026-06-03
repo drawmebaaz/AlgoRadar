@@ -6,11 +6,10 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from algoradar import run_analysis
-from algoradar.platforms import analyze_external_platforms, build_combined_overview
+from algoradar.platforms import analyze_external_platforms, build_combined_overview, lookup_leetcode_problem
 from algoradar.solve_probability import (
     available_probability_tags,
     score_saved_profile_problem,
-    target_rating_from_difficulty,
 )
 
 st.set_page_config(
@@ -39,6 +38,11 @@ def cached_external_analysis(leetcode_handle: str, codechef_handle: str, force_r
         codechef_handle=codechef_handle,
         force_refresh=force_refresh,
     )
+
+
+@st.cache_data(show_spinner=False)
+def cached_leetcode_problem_lookup(slug_or_url: str, force_refresh: bool):
+    return lookup_leetcode_problem(slug_or_url, force_refresh=force_refresh)
 
 
 def main() -> None:
@@ -311,7 +315,7 @@ def render_combined_profile(result, external_results: dict) -> None:
     cols = st.columns(4)
     metric_card(cols[0], "Total solved", str(summary["total_solved"]), "all connected platforms")
     metric_card(cols[1], "Platforms", f"{summary['platforms_connected']}/3", "active public profiles")
-    metric_card(cols[2], "Best rating signal", str(summary["best_rating"]), "max platform rating/anchor")
+    metric_card(cols[2], "Focus areas", str(summary["focus_areas"]), "combined weakness signals")
     metric_card(cols[3], "Priority platform", summary["attention_platform"], "highest repair signal")
 
     if platforms.empty:
@@ -327,8 +331,8 @@ def render_combined_profile(result, external_results: dict) -> None:
                 "handle": "Handle",
                 "status": "Status",
                 "solved": "Solved",
-                "current_rating": "Current rating",
-                "max_rating": "Max rating",
+                "current_rating": "Native rating",
+                "max_rating": "Native max",
                 "contests": "Contests",
                 "accuracy": "Accuracy %",
                 "signal": "Data signal",
@@ -364,7 +368,7 @@ def render_combined_profile(result, external_results: dict) -> None:
             st.dataframe(show.head(12), width="stretch", hide_index=True)
 
     with right:
-        panel_title("Rating trend", "contest signals from platforms that expose history")
+        panel_title("Native rating trend", "contest signals in each platform's own scale")
         if trend.empty:
             st.info("No contest rating history found.")
         else:
@@ -400,7 +404,7 @@ def render_leetcode_detail(analysis) -> None:
     profile = analysis.profile
     cols = st.columns(4)
     metric_card(cols[0], "Solved", str(profile.get("total_solved", 0)), "Easy + Medium + Hard")
-    metric_card(cols[1], "Contest rating", str(profile.get("contest_rating", 0)), "LeetCode public rating")
+    metric_card(cols[1], "Contest rating", str(profile.get("contest_rating", 0)), "LeetCode native rating")
     metric_card(cols[2], "Acceptance", f"{profile.get('acceptance_rate', 0)}%", "accepted submissions / submissions")
     metric_card(cols[3], "Ranking", str(profile.get("ranking", 0)), "global profile rank")
 
@@ -553,46 +557,31 @@ def render_general_probability(result, external_results: dict, active_args: dict
         tags_options = available_probability_tags(result, external_results)
         default_tags = _default_probability_tags(result, external_results)
 
-        problem_name = "Custom training target"
-        popularity = 5000
-        if platform == "Codeforces" and result is not None:
-            default_code = _default_problem_code(result)
-            problem_code = st.text_input("Codeforces problem code", value=default_code)
-            problem = _find_problem_by_code(result.problems, problem_code)
-            if problem is not None:
-                problem_name = str(problem["name"])
-                rating = int(problem["rating"])
-                tags = list(problem["tags"] or [])
-                popularity = int(problem["solved_count"])
-                st.markdown(
-                    f"""
-                    <div class="rule-list">
-                      <p><strong>{problem['problem_id']} - {problem_name}</strong></p>
-                      <p>Rating: <strong>{rating}</strong> ({problem.get('rating_source', 'official')})</p>
-                      <p>Solved by: <strong>{popularity}</strong> users</p>
-                      <p>Tags: {_format_tags(tags) or "untagged"}</p>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.warning("Problem code not found. Use manual fields below.")
-                rating, tags, popularity, problem_name = _manual_probability_inputs(platform, tags_options, default_tags)
-        else:
-            rating, tags, popularity, problem_name = _manual_probability_inputs(platform, tags_options, default_tags)
+        context = _probability_problem_context(
+            platform=platform,
+            result=result,
+            tags_options=tags_options,
+            default_tags=default_tags,
+            force_refresh=bool(active_args.get("force_refresh", False)),
+        )
 
         score = score_saved_profile_problem(
             platform=platform,
-            target_rating=rating,
-            tags=tags,
-            popularity=popularity,
+            target_rating=context["target_rating"],
+            tags=context["tags"],
+            popularity=context["popularity"],
             codeforces_result=result,
             external_results=external_results,
+            leetcode_difficulty=context.get("leetcode_difficulty", ""),
+            leetcode_contest_slot=context.get("leetcode_contest_slot", "Unknown"),
         )
-        st.caption("This scorecard prioritizes solved volume, hardest solved rating, and average solved rating on the selected tags. Accuracy is intentionally not a primary signal.")
+        st.caption(
+            "Ratings are first calibrated onto a CF-equivalent difficulty scale using the mapping CSV. "
+            "The score prioritizes solved volume, hardest solved difficulty, and selected-tag strength; accuracy is not a primary signal."
+        )
 
     with right:
-        panel_title("Solve probability", "combined handle-aware scorecard")
+        panel_title("Solve probability", "calibrated handle-aware estimate")
         probability = score["solve_probability_pct"]
         fig = go.Figure(
             go.Indicator(
@@ -618,26 +607,156 @@ def render_general_probability(result, external_results: dict, active_args: dict
         st.markdown(f"<div class='bucket-label'>{score['bucket'].upper()}</div>", unsafe_allow_html=True)
 
     cols = st.columns(4)
-    metric_card(cols[0], "Combined anchor", str(int(score["anchor_rating"])), "rating signal from provided handles")
-    metric_card(cols[1], "Total solved", str(int(score["total_solved"])), "across provided handles")
+    metric_card(cols[0], "User CF-eq anchor", str(int(score["anchor_cf_equivalent"])), "calibrated from provided handles")
+    metric_card(cols[1], "Target CF-eq", str(int(score["target_cf_equivalent"])), str(score["native_target"]))
     metric_card(cols[2], "Tag solves", str(int(score["tag_solved"])), "selected tags / aliases")
     metric_card(cols[3], "Tag ceiling", str(int(score["tag_rating_ceiling"])), "hardest solved signal")
+    st.caption(f"Calibration: {score['calibration_source']} | confidence: {score['calibration_confidence']} | weight: {score['calibration_weight']}")
 
     panel_title("Why this probability", "volume and rating-strength inputs")
     st.dataframe(score["factors"], width="stretch", hide_index=True)
 
 
-def _manual_probability_inputs(platform: str, tags_options: list[str], default_tags: list[str]) -> tuple[int, list[str], int, str]:
+def _probability_problem_context(
+    platform: str,
+    result,
+    tags_options: list[str],
+    default_tags: list[str],
+    force_refresh: bool,
+) -> dict:
+    if platform == "Codeforces" and result is not None:
+        default_code = _default_problem_code(result)
+        problem_code = st.text_input("Codeforces problem code", value=default_code)
+        problem = _find_problem_by_code(result.problems, problem_code)
+        if problem is not None:
+            problem_name = str(problem["name"])
+            rating = int(problem["rating"])
+            fetched_tags = list(problem["tags"] or [])
+            popularity = int(problem["solved_count"])
+            tag_options = _merge_tag_options(tags_options, fetched_tags)
+            tags = st.multiselect(
+                "Problem tags",
+                options=tag_options,
+                default=[tag for tag in fetched_tags if tag in tag_options][:6],
+                help="Pulled from Codeforces problem metadata; edit if needed.",
+            )
+            st.markdown(
+                f"""
+                <div class="rule-list">
+                  <p><strong>{problem['problem_id']} - {problem_name}</strong></p>
+                  <p>Difficulty: <strong>{rating}</strong> ({problem.get('rating_source', 'official')})</p>
+                  <p>Solved by: <strong>{popularity}</strong> users</p>
+                  <p>Tags: {_format_tags(fetched_tags) or "untagged"}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            return {
+                "target_rating": rating,
+                "tags": tags or fetched_tags,
+                "popularity": popularity,
+                "problem_name": problem_name,
+                "leetcode_difficulty": "",
+                "leetcode_contest_slot": "Unknown",
+            }
+        st.warning("Problem code not found. Use manual fields below.")
+
+    if platform == "LeetCode":
+        return _leetcode_probability_inputs(tags_options, default_tags, force_refresh)
+
+    return _manual_probability_inputs(platform, tags_options, default_tags)
+
+
+def _leetcode_probability_inputs(tags_options: list[str], default_tags: list[str], force_refresh: bool) -> dict:
+    slug_or_url = st.text_input("LeetCode problem slug or URL", placeholder="two-sum or https://leetcode.com/problems/two-sum/")
+    if slug_or_url.strip():
+        try:
+            problem = cached_leetcode_problem_lookup(slug_or_url.strip(), force_refresh)
+        except Exception as exc:
+            problem = {"status": "error", "error": str(exc)}
+        if problem.get("status") == "ok":
+            fetched_tags = list(problem.get("tags", []) or [])
+            tag_options = _merge_tag_options(tags_options, fetched_tags)
+            tags = st.multiselect(
+                "Problem tags",
+                options=tag_options,
+                default=[tag for tag in fetched_tags if tag in tag_options][:6],
+                help="Pulled from LeetCode topic tags; edit if needed.",
+            )
+            slot = st.selectbox(
+                "Contest slot reference",
+                options=["Unknown", "Q1", "Q2", "Q3", "Q4"],
+                index=0,
+                help="LeetCode public problem lookup does not expose the original contest slot. Set this only if you know it.",
+            )
+            accepted = int(problem.get("accepted", 0) or 0)
+            popularity = accepted or 5000
+            st.markdown(
+                f"""
+                <div class="rule-list">
+                  <p><strong>#{problem.get('problem_id', '')} - {problem.get('title', '')}</strong></p>
+                  <p>Difficulty: <strong>{problem.get('difficulty', 'Medium')}</strong></p>
+                  <p>Accepted submissions: <strong>{accepted}</strong></p>
+                  <p>Acceptance rate: <strong>{problem.get('acceptance_rate', 0)}%</strong></p>
+                  <p>Tags: {_format_tags(fetched_tags) or "untagged"}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.caption("LeetCode has no official problem rating. AlgoRadar uses difficulty, tags, acceptance, and optional Q1-Q4 slot as calibrated references.")
+            return {
+                "target_rating": None,
+                "tags": tags or fetched_tags,
+                "popularity": popularity,
+                "problem_name": problem.get("title", ""),
+                "leetcode_difficulty": problem.get("difficulty", "Medium"),
+                "leetcode_contest_slot": slot,
+            }
+        st.warning(problem.get("error", "LeetCode problem could not be loaded. Use manual fields below."))
+    else:
+        st.info("Enter a LeetCode slug or URL to fetch difficulty and tags automatically, or use manual fields below.")
+    return _manual_probability_inputs("LeetCode", tags_options, default_tags)
+
+
+def _manual_probability_inputs(platform: str, tags_options: list[str], default_tags: list[str]) -> dict:
     problem_name = st.text_input("Problem name", value="Custom training target")
     if platform == "LeetCode":
         difficulty = st.selectbox("LeetCode difficulty", options=["Easy", "Medium", "Hard"], index=1)
-        rating = target_rating_from_difficulty(platform, difficulty, fallback_rating=1600)
-        st.caption(f"AlgoRadar maps {difficulty} to an internal {rating} rating for cross-platform comparison.")
+        slot = st.selectbox(
+            "Contest slot reference",
+            options=["Unknown", "Q1", "Q2", "Q3", "Q4"],
+            index=0,
+            help="Optional reference if the problem came from a LeetCode contest.",
+        )
+        rating = None
+        st.caption("LeetCode has no official problem rating. Difficulty and optional contest slot are calibrated onto a CF-equivalent scale.")
+    elif platform == "CodeChef":
+        rating = st.slider("CodeChef problem rating (native)", min_value=400, max_value=5000, value=1500, step=50)
+        difficulty = ""
+        slot = "Unknown"
     else:
-        rating = st.slider("Problem rating", min_value=800, max_value=3500, value=1600, step=100)
-    tags = st.multiselect("Problem tags", options=tags_options, default=[tag for tag in default_tags if tag in tags_options][:3])
+        rating = st.slider("Codeforces problem rating (official or estimated)", min_value=400, max_value=3500, value=1600, step=100)
+        difficulty = ""
+        slot = "Unknown"
+    tags = st.multiselect(
+        "Problem tags",
+        options=tags_options,
+        default=[tag for tag in default_tags if tag in tags_options][:3],
+        help="Use the platform tags when available; otherwise add the closest topic tags manually.",
+    )
     popularity = st.number_input("Solved count / popularity", min_value=0, max_value=500000, value=5000, step=100)
-    return int(rating), tags, int(popularity), problem_name
+    return {
+        "target_rating": int(rating) if rating is not None else None,
+        "tags": tags,
+        "popularity": int(popularity),
+        "problem_name": problem_name,
+        "leetcode_difficulty": difficulty,
+        "leetcode_contest_slot": slot,
+    }
+
+
+def _merge_tag_options(tags_options: list[str], tags: list[str]) -> list[str]:
+    return sorted(set(tags_options) | {str(tag) for tag in tags if str(tag).strip()}, key=lambda value: value.lower())
 
 
 def _default_probability_tags(result, external_results: dict) -> list[str]:

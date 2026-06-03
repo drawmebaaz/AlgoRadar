@@ -274,14 +274,15 @@ def build_combined_overview(
 
     ok_rows = platform_rows[platform_rows["status"] == "ok"] if not platform_rows.empty else platform_rows
     total_solved = int(ok_rows["solved"].sum()) if not ok_rows.empty else 0
-    best_rating = int(ok_rows["max_rating"].max()) if not ok_rows.empty else 0
     platforms_connected = int(len(ok_rows)) if not ok_rows.empty else 0
+    contest_entries = int(ok_rows["contests"].sum()) if not ok_rows.empty else 0
     attention_platform = _attention_platform(platform_rows, focus)
 
     summary = {
         "total_solved": total_solved,
-        "best_rating": best_rating,
         "platforms_connected": platforms_connected,
+        "contest_entries": contest_entries,
+        "focus_areas": int(len(focus)),
         "attention_platform": attention_platform,
     }
     return {
@@ -454,6 +455,109 @@ def _fetch_leetcode(username: str) -> dict[str, Any]:
     if payload.get("errors"):
         raise RuntimeError(payload["errors"][0].get("message", "LeetCode GraphQL error"))
     return payload.get("data", {})
+
+
+def lookup_leetcode_problem(slug_or_url: str, force_refresh: bool = False) -> dict[str, Any]:
+    slug = _leetcode_slug_from_input(slug_or_url)
+    if not slug:
+        return {"status": "missing", "error": "Enter a LeetCode problem slug or URL."}
+    payload = _cached_json(
+        CACHE_DIR / f"leetcode_problem_{_safe_key(slug)}.json",
+        lambda: _fetch_leetcode_problem(slug),
+        force_refresh=force_refresh,
+        max_age_seconds=CATALOG_CACHE_SECONDS,
+    )
+    return _leetcode_problem_from_payload(payload)
+
+
+def _fetch_leetcode_problem(slug: str) -> dict[str, Any]:
+    query = """
+    query AlgoRadarLeetCodeProblem($titleSlug: String!) {
+      question(titleSlug: $titleSlug) {
+        questionFrontendId
+        title
+        titleSlug
+        difficulty
+        isPaidOnly
+        stats
+        topicTags {
+          name
+          slug
+        }
+      }
+    }
+    """
+    response = requests.post(
+        LEETCODE_GRAPHQL_URL,
+        json={"query": query, "variables": {"titleSlug": slug}},
+        headers={
+            "User-Agent": USER_AGENT,
+            "Referer": f"https://leetcode.com/problems/{slug}/",
+            "Content-Type": "application/json",
+        },
+        timeout=REQUEST_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if payload.get("errors"):
+        raise RuntimeError(payload["errors"][0].get("message", "LeetCode problem lookup error"))
+    data = payload.get("data", {})
+    data["fetched_at"] = int(time.time())
+    return data
+
+
+def _leetcode_problem_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    question = payload.get("question") or {}
+    if not question:
+        return {"status": "not_found", "error": "LeetCode problem was not found."}
+    stats = _parse_leetcode_problem_stats(question.get("stats"))
+    tags = [tag.get("name", "") for tag in question.get("topicTags", []) if tag.get("name")]
+    accepted = int(float(stats.get("totalAcceptedRaw", 0) or 0))
+    submissions = int(float(stats.get("totalSubmissionRaw", 0) or 0))
+    acceptance_rate = _leetcode_acceptance_rate(stats, accepted, submissions)
+    slug = question.get("titleSlug", "")
+    return {
+        "status": "ok",
+        "problem_id": str(question.get("questionFrontendId") or slug),
+        "title": question.get("title", ""),
+        "slug": slug,
+        "difficulty": question.get("difficulty", ""),
+        "paid_only": bool(question.get("isPaidOnly", False)),
+        "tags": tags,
+        "accepted": accepted,
+        "submissions": submissions,
+        "acceptance_rate": acceptance_rate,
+        "url": f"https://leetcode.com/problems/{slug}/" if slug else "https://leetcode.com/problemset/",
+    }
+
+
+def _parse_leetcode_problem_stats(raw_stats: Any) -> dict[str, Any]:
+    if isinstance(raw_stats, dict):
+        return raw_stats
+    try:
+        return json.loads(raw_stats or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return {}
+
+
+def _leetcode_acceptance_rate(stats: dict[str, Any], accepted: int, submissions: int) -> float:
+    raw = stats.get("acRate")
+    if raw not in (None, ""):
+        try:
+            return round(float(str(raw).replace("%", "")), 1)
+        except ValueError:
+            pass
+    return round(accepted / submissions * 100, 1) if submissions else 0.0
+
+
+def _leetcode_slug_from_input(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    match = re.search(r"/problems/([^/?#]+)/?", text)
+    slug = match.group(1) if match else text
+    slug = slug.split("?")[0].split("#")[0].strip("/")
+    return re.sub(r"[^a-zA-Z0-9-]+", "", slug.lower())
 
 
 def _fetch_leetcode_problemset(force_refresh: bool = False) -> pd.DataFrame:
