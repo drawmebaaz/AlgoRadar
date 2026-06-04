@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -17,6 +19,18 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+_STRETCH_SUPPORT_CACHE: dict[str, bool] = {}
+
+
+def stretch_kwargs(component) -> dict[str, bool | str]:
+    key = getattr(component, "__qualname__", repr(component))
+    if key not in _STRETCH_SUPPORT_CACHE:
+        try:
+            _STRETCH_SUPPORT_CACHE[key] = "width" in inspect.signature(component).parameters
+        except (TypeError, ValueError):
+            _STRETCH_SUPPORT_CACHE[key] = False
+    return {"width": "stretch"} if _STRETCH_SUPPORT_CACHE[key] else {"use_container_width": True}
 
 
 @st.cache_resource(show_spinner=False)
@@ -52,7 +66,7 @@ def main() -> None:
         codeforces_handle = st.text_input("Codeforces handle", key="codeforces_handle_input", help="Optional. Enables the deepest verdict-level ML analysis.")
         codechef_handle = st.text_input("CodeChef handle", key="codechef_handle_input", help="Optional. Enables CodeChef rating and practice analysis.")
         leetcode_handle = st.text_input("LeetCode username", key="leetcode_handle_input", help="Optional. Enables LeetCode topic and contest analysis.")
-        analyze = st.button("Analyze handles", use_container_width=True)
+        analyze = st.button("Analyze handles", **stretch_kwargs(st.button))
         force_refresh = st.toggle("Refresh platform caches", value=False)
         prefer_transformer = st.toggle(
             "Use MiniLM embeddings",
@@ -259,7 +273,7 @@ def render_profile(result) -> None:
                 )
             )
             fig.update_layout(yaxis2=dict(overlaying="y", side="right", showgrid=False), **chart_layout())
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
 
     with right:
         panel_title("Verdict distribution", "submission failure patterns")
@@ -276,7 +290,7 @@ def render_profile(result) -> None:
                 )
             )
             fig.update_layout(**chart_layout(height=360))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
 
     left, right = st.columns(2)
     with left:
@@ -296,7 +310,7 @@ def render_profile(result) -> None:
                 )
             )
             fig.update_layout(yaxis2=dict(overlaying="y", side="right", range=[0, 100], showgrid=False), **chart_layout())
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
         else:
             st.info("No rating data available.")
 
@@ -306,7 +320,7 @@ def render_profile(result) -> None:
         if not frame.empty:
             fig = go.Figure(go.Bar(x=frame["rating_bucket"], y=frame["solved"], marker_color="#5ee0a0"))
             fig.update_layout(**chart_layout())
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
         else:
             st.info("No accepted submissions available.")
 
@@ -344,7 +358,7 @@ def render_combined_profile(result, external_results: dict) -> None:
                 "signal": "Data signal",
             }
         )
-        st.dataframe(show, use_container_width=True, hide_index=True)
+        st.dataframe(show, **stretch_kwargs(st.dataframe), hide_index=True)
 
     with right:
         panel_title("Solved distribution", "cross-platform practice volume")
@@ -360,7 +374,7 @@ def render_combined_profile(result, external_results: dict) -> None:
                 )
             )
             fig.update_layout(**chart_layout(height=360), showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
 
     left, right = st.columns([1.2, 1])
     with left:
@@ -377,7 +391,7 @@ def render_combined_profile(result, external_results: dict) -> None:
                     "next_action": "Next action",
                 }
             )
-            st.dataframe(show.head(12), use_container_width=True, hide_index=True)
+            st.dataframe(show.head(12), **stretch_kwargs(st.dataframe), hide_index=True)
 
     with right:
         panel_title("Native rating trend", "contest signals in each platform's own scale")
@@ -399,7 +413,7 @@ def render_combined_profile(result, external_results: dict) -> None:
                     )
                 )
             fig.update_layout(**chart_layout(height=420))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
 
 
 def render_platform_detail(analysis, platform_name: str) -> None:
@@ -443,7 +457,7 @@ def render_leetcode_detail(analysis) -> None:
                 )
             )
             fig.update_layout(yaxis2=dict(overlaying="y", side="right", range=[0, 100], showgrid=False), **chart_layout())
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
 
     with right:
         panel_title("Contest trend", "LeetCode rating history")
@@ -455,7 +469,7 @@ def render_leetcode_detail(analysis) -> None:
             fig.add_trace(go.Scatter(x=trend["contest"], y=trend["rating"], mode="lines+markers", name="Rating", line=dict(color="#75a7ff")))
             fig.add_bar(x=trend["contest"], y=trend["delta"], name="Delta", marker_color="#2b3340", yaxis="y2")
             fig.update_layout(yaxis2=dict(overlaying="y", side="right", showgrid=False), **chart_layout())
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
 
     left, right = st.columns([1.2, 1])
     with left:
@@ -475,7 +489,7 @@ def render_leetcode_detail(analysis) -> None:
                     "source": "Source",
                 }
             )
-            st.dataframe(show, use_container_width=True, hide_index=True)
+            st.dataframe(show, **stretch_kwargs(st.dataframe), hide_index=True)
 
     with right:
         panel_title("Top solved tags", "public tag counters")
@@ -486,7 +500,7 @@ def render_leetcode_detail(analysis) -> None:
             sorted_tags = tags.sort_values("solved")
             fig = go.Figure(go.Bar(x=sorted_tags["solved"], y=sorted_tags["tag"], orientation="h", marker_color="#5ee0a0"))
             fig.update_layout(**chart_layout(height=480), showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
 
 
 def render_codechef_detail(analysis) -> None:
@@ -508,7 +522,7 @@ def render_codechef_detail(analysis) -> None:
             fig.add_trace(go.Scatter(x=trend["contest"], y=trend["rating"], mode="lines+markers", name="Rating", line=dict(color="#5ee0a0")))
             fig.add_bar(x=trend["contest"], y=trend["delta"], name="Delta", marker_color="#75a7ff", opacity=0.42, yaxis="y2")
             fig.update_layout(yaxis2=dict(overlaying="y", side="right", showgrid=False), **chart_layout(height=430))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
 
     with right:
         panel_title("Solved sections", "what the public profile exposes")
@@ -518,7 +532,7 @@ def render_codechef_detail(analysis) -> None:
         else:
             fig = go.Figure(go.Bar(x=difficulty["difficulty"], y=difficulty["solved"], marker_color="#f8c76f"))
             fig.update_layout(**chart_layout(height=430), showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
 
     panel_title("CodeChef weakness signals", "rating-history and practice-volume signals")
     weakness = analysis.weakness.copy()
@@ -535,7 +549,7 @@ def render_codechef_detail(analysis) -> None:
                 "source": "Source",
             }
         )
-        st.dataframe(show, use_container_width=True, hide_index=True)
+        st.dataframe(show, **stretch_kwargs(st.dataframe), hide_index=True)
 
 
 def render_combined_recommendations(result, external_results: dict, active_args: dict[str, str]) -> None:
@@ -680,7 +694,7 @@ def render_general_probability(result, external_results: dict, active_args: dict
             )
         )
         fig.update_layout(**chart_layout(height=360))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
         st.markdown(f"<div class='bucket-label'>{score['bucket'].upper()}</div>", unsafe_allow_html=True)
 
     cols = st.columns(4)
@@ -691,7 +705,7 @@ def render_general_probability(result, external_results: dict, active_args: dict
     st.caption(f"Calibration: {score['calibration_source']} | confidence: {score['calibration_confidence']} | weight: {score['calibration_weight']}")
 
     panel_title("Why this probability", "volume and rating-strength inputs")
-    st.dataframe(score["factors"], use_container_width=True, hide_index=True)
+    st.dataframe(score["factors"], **stretch_kwargs(st.dataframe), hide_index=True)
 
 
 def _probability_problem_context(
@@ -883,7 +897,7 @@ def render_weakness(result) -> None:
                 "next_action": "Next action",
             }
         )
-        st.dataframe(show, use_container_width=True, height=520)
+        st.dataframe(show, **stretch_kwargs(st.dataframe), height=520)
 
     with right:
         panel_title("Most failed tags", "repair priority")
@@ -906,10 +920,10 @@ def render_weakness(result) -> None:
             )
         )
         fig.update_layout(**chart_layout(height=520), showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
 
     panel_title("Explainability", "random forest feature importance for weakness model")
-    st.dataframe(result.weakness_model["feature_importance"], use_container_width=True, hide_index=True)
+    st.dataframe(result.weakness_model["feature_importance"], **stretch_kwargs(st.dataframe), hide_index=True)
 
 
 def render_recommendations(result) -> None:
@@ -956,7 +970,7 @@ def render_recommendations(result) -> None:
         frame["rank_score"] = frame["rank_score"].round(3)
         st.dataframe(
             frame,
-            use_container_width=True,
+            **stretch_kwargs(st.dataframe),
             hide_index=True,
             column_config={
                 "open": st.column_config.LinkColumn("Open", display_text="Codeforces"),
@@ -978,7 +992,7 @@ def render_recommendations(result) -> None:
         frame["semantic_score"] = frame["semantic_score"].round(3)
         st.dataframe(
             frame,
-            use_container_width=True,
+            **stretch_kwargs(st.dataframe),
             hide_index=True,
             column_config={
                 "open": st.column_config.LinkColumn("Open", display_text="Codeforces"),
@@ -1022,7 +1036,7 @@ def render_progress(result) -> None:
         )
     )
     fig.update_layout(yaxis2=dict(overlaying="y", side="right", range=[0, 100], showgrid=False), **chart_layout(height=460))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
 
 
 def _show_recommendations_table(recommendations: pd.DataFrame, show_platform: bool = True, show_bucket: bool = True) -> None:
@@ -1062,7 +1076,7 @@ def _show_recommendations_table(recommendations: pd.DataFrame, show_platform: bo
     frame = frame[[column for column in columns if column in frame.columns]]
     st.dataframe(
         frame,
-        use_container_width=True,
+        **stretch_kwargs(st.dataframe),
         hide_index=True,
         column_config={
             "platform": st.column_config.TextColumn("Platform"),
