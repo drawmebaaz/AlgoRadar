@@ -281,6 +281,24 @@ python -m pytest -q
 python3 -m pytest -q
 ```
 
+## Troubleshooting
+
+If Streamlit shows an error like `unexpected keyword argument`, your environment is probably using an older preinstalled Streamlit package instead of the project dependencies. From the repository folder, upgrade the app dependencies:
+
+#### Windows
+
+```powershell
+python -m pip install --upgrade -r requirements.txt
+```
+
+#### macOS / Linux
+
+```bash
+python3 -m pip install --upgrade -r requirements.txt
+```
+
+Then restart the app with `streamlit run app.py`.
+
 ## Free Deployment
 
 ### Streamlit Community Cloud
