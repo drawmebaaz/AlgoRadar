@@ -151,14 +151,14 @@ source .venv/bin/activate
 
 ```powershell
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+python -m pip install --upgrade -r requirements.txt
 ```
 
 #### macOS / Linux
 
 ```bash
 python3 -m pip install --upgrade pip
-python3 -m pip install -r requirements.txt
+python3 -m pip install --upgrade -r requirements.txt
 ```
 
 ## Run the App
@@ -283,7 +283,9 @@ python3 -m pytest -q
 
 ## Troubleshooting
 
-If Streamlit shows an error like `unexpected keyword argument`, your environment is probably using an older preinstalled Streamlit package instead of the project dependencies. From the repository folder, upgrade the app dependencies:
+Most setup errors come from running the app inside an existing Anaconda/base environment that already has old packages installed. The safest fix is to use the project virtual environment from the setup section.
+
+If Streamlit shows an error like `unexpected keyword argument`, your environment is using an older preinstalled Streamlit package instead of the project dependencies. From the repository folder, upgrade the app dependencies:
 
 #### Windows
 
@@ -298,6 +300,26 @@ python3 -m pip install --upgrade -r requirements.txt
 ```
 
 Then restart the app with `streamlit run app.py`.
+
+If you see a NumPy error like `np.unicode_ was removed in the NumPy 2.0 release`, your environment has a NumPy 2.x package mixed with an older scientific package from Anaconda. Pull the latest repo changes and reinstall the pinned requirements:
+
+#### macOS / Linux
+
+```bash
+git pull
+python3 -m pip install --upgrade --force-reinstall -r requirements.txt
+streamlit run app.py
+```
+
+For Anaconda users, avoid the base environment:
+
+```bash
+conda create -n algoradar python=3.12 -y
+conda activate algoradar
+python -m pip install --upgrade pip
+python -m pip install --upgrade -r requirements.txt
+streamlit run app.py
+```
 
 ## Free Deployment
 

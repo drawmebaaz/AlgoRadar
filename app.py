@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -268,7 +267,14 @@ def render_profile(result) -> None:
         if verdicts.empty:
             st.info("No submissions found.")
         else:
-            fig = px.pie(verdicts, names="verdict", values="count", hole=0.58, color_discrete_sequence=palette())
+            fig = go.Figure(
+                go.Pie(
+                    labels=verdicts["verdict"],
+                    values=verdicts["count"],
+                    hole=0.58,
+                    marker=dict(colors=palette()),
+                )
+            )
             fig.update_layout(**chart_layout(height=360))
             st.plotly_chart(fig, use_container_width=True)
 
@@ -298,7 +304,7 @@ def render_profile(result) -> None:
         panel_title("Solved difficulty distribution", "where accepted problems cluster")
         frame = result.solved_difficulty
         if not frame.empty:
-            fig = px.bar(frame, x="rating_bucket", y="solved", color_discrete_sequence=["#5ee0a0"])
+            fig = go.Figure(go.Bar(x=frame["rating_bucket"], y=frame["solved"], marker_color="#5ee0a0"))
             fig.update_layout(**chart_layout())
             st.plotly_chart(fig, use_container_width=True)
         else:
@@ -346,7 +352,13 @@ def render_combined_profile(result, external_results: dict) -> None:
         if ok.empty:
             st.info("No successful platform pulls yet.")
         else:
-            fig = px.bar(ok, x="platform", y="solved", color="platform", color_discrete_sequence=palette())
+            fig = go.Figure(
+                go.Bar(
+                    x=ok["platform"],
+                    y=ok["solved"],
+                    marker_color=_series_colors(ok["platform"]),
+                )
+            )
             fig.update_layout(**chart_layout(height=360), showlegend=False)
             st.plotly_chart(fig, use_container_width=True)
 
@@ -374,15 +386,18 @@ def render_combined_profile(result, external_results: dict) -> None:
         else:
             trend = trend.copy()
             trend["point"] = trend.groupby("platform").cumcount()
-            fig = px.line(
-                trend,
-                x="point",
-                y="rating",
-                color="platform",
-                markers=True,
-                hover_data=["contest", "delta"],
-                color_discrete_sequence=palette(),
-            )
+            fig = go.Figure()
+            for platform, group in trend.groupby("platform"):
+                fig.add_trace(
+                    go.Scatter(
+                        x=group["point"],
+                        y=group["rating"],
+                        mode="lines+markers",
+                        name=str(platform),
+                        customdata=group[["contest", "delta"]],
+                        hovertemplate="Contest: %{customdata[0]}<br>Rating: %{y}<br>Delta: %{customdata[1]}<extra></extra>",
+                    )
+                )
             fig.update_layout(**chart_layout(height=420))
             st.plotly_chart(fig, use_container_width=True)
 
@@ -468,7 +483,8 @@ def render_leetcode_detail(analysis) -> None:
         if tags.empty:
             st.info("No public tag counters available.")
         else:
-            fig = px.bar(tags.sort_values("solved"), x="solved", y="tag", orientation="h", color_discrete_sequence=["#5ee0a0"])
+            sorted_tags = tags.sort_values("solved")
+            fig = go.Figure(go.Bar(x=sorted_tags["solved"], y=sorted_tags["tag"], orientation="h", marker_color="#5ee0a0"))
             fig.update_layout(**chart_layout(height=480), showlegend=False)
             st.plotly_chart(fig, use_container_width=True)
 
@@ -500,7 +516,7 @@ def render_codechef_detail(analysis) -> None:
         if difficulty.empty:
             st.info("No solved section data available.")
         else:
-            fig = px.bar(difficulty, x="difficulty", y="solved", color_discrete_sequence=["#f8c76f"])
+            fig = go.Figure(go.Bar(x=difficulty["difficulty"], y=difficulty["solved"], marker_color="#f8c76f"))
             fig.update_layout(**chart_layout(height=430), showlegend=False)
             st.plotly_chart(fig, use_container_width=True)
 
@@ -872,19 +888,22 @@ def render_weakness(result) -> None:
     with right:
         panel_title("Most failed tags", "repair priority")
         top = weakness.head(10).sort_values("priority_score", ascending=True)
-        fig = px.bar(
-            top,
-            x="priority_score",
-            y="tag",
-            orientation="h",
-            color="level",
-            color_discrete_map={
-                "Strong": "#5ee0a0",
-                "Stable": "#75a7ff",
-                "Weak": "#f28b82",
-                "Untouched": "#6f7886",
-                "Over-attempted but low accuracy": "#f8c76f",
-            },
+        level_colors = {
+            "Strong": "#5ee0a0",
+            "Stable": "#75a7ff",
+            "Weak": "#f28b82",
+            "Untouched": "#6f7886",
+            "Over-attempted but low accuracy": "#f8c76f",
+        }
+        fig = go.Figure(
+            go.Bar(
+                x=top["priority_score"],
+                y=top["tag"],
+                orientation="h",
+                marker_color=top["level"].map(level_colors).fillna("#75a7ff"),
+                customdata=top["level"],
+                hovertemplate="Tag: %{y}<br>Priority: %{x}<br>Level: %{customdata}<extra></extra>",
+            )
         )
         fig.update_layout(**chart_layout(height=520), showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
@@ -1102,6 +1121,12 @@ def chart_layout(height: int = 390) -> dict:
 
 def palette() -> list[str]:
     return ["#5ee0a0", "#f28b82", "#f8c76f", "#75a7ff", "#6f7886"]
+
+
+def _series_colors(values) -> list[str]:
+    colors = palette()
+    keys = {value: colors[index % len(colors)] for index, value in enumerate(dict.fromkeys(values))}
+    return [keys[value] for value in values]
 
 
 def bucket_color(bucket: str) -> str:
