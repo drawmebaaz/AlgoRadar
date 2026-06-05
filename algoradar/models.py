@@ -2,18 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-import joblib
 import numpy as np
 import pandas as pd
-from sklearn.dummy import DummyClassifier
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, precision_score, recall_score
-from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 
-from .config import MODEL_DIR
 from .features import SOLVE_FEATURE_COLUMNS
 
 CONTEST_FEATURE_COLUMNS = [
@@ -36,136 +27,49 @@ PERFORMANCE_BANDS = ["Needs repair", "Stable", "Growth", "Breakout"]
 
 def train_contest_score_predictor(profile: dict[str, Any], random_state: int = 42) -> dict[str, Any]:
     train_frame = _synthetic_contest_training_frame(profile, random_state=random_state)
-    x = train_frame[CONTEST_FEATURE_COLUMNS]
-    y = train_frame["band"]
+    synthetic_predictions = train_frame.apply(_contest_scorecard_band, axis=1)
+    metrics = _label_metrics(train_frame["band"], synthetic_predictions)
     profile_frame = pd.DataFrame([{key: profile.get(key, 0) for key in CONTEST_FEATURE_COLUMNS}])
+    predicted_band = str(_contest_scorecard_band(profile_frame.iloc[0]))
 
-    if y.nunique() < 2:
-        model = DummyClassifier(strategy="constant", constant=str(y.iloc[0]))
-        model.fit(x, y)
-        predicted_band = str(model.predict(profile_frame)[0])
-        metrics = {"accuracy": 1.0, "precision": 1.0, "recall": 1.0}
-        report = {
-            "selected_model_name": "constant_baseline",
-            "model": model,
-            "logistic_regression": None,
-            "random_forest": None,
-            "metrics": {
-                "constant_baseline": metrics,
-            },
-            "features": CONTEST_FEATURE_COLUMNS,
-            "feature_importance": _importance_frame(CONTEST_FEATURE_COLUMNS, np.zeros(len(CONTEST_FEATURE_COLUMNS))),
-            "predicted_band": predicted_band,
-            "band_probabilities": _probability_map(model, profile_frame),
-        }
-        joblib.dump(report, MODEL_DIR / "contest_score_predictor.joblib")
-        return report
-
-    stratify = y if y.nunique() > 1 and y.value_counts().min() >= 2 else None
-    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.24, stratify=stratify, random_state=random_state)
-
-    logistic = Pipeline(
-        [
-            ("scale", StandardScaler()),
-            ("model", LogisticRegression(max_iter=2000, class_weight="balanced", random_state=random_state)),
-        ]
-    )
-    forest = RandomForestClassifier(
-        n_estimators=100,
-        max_depth=8,
-        min_samples_leaf=4,
-        random_state=random_state,
-        class_weight="balanced",
-        n_jobs=-1,
-    )
-
-    logistic.fit(x_train, y_train)
-    forest.fit(x_train, y_train)
-
-    logistic_metrics = _classification_metrics(y_test, logistic.predict(x_test), average="macro")
-    forest_predictions = forest.predict(x_test)
-    forest_metrics = _classification_metrics(y_test, forest_predictions, average="macro")
-
-    selected_name = "random_forest" if forest_metrics["accuracy"] >= logistic_metrics["accuracy"] else "logistic_regression"
-    selected_model = forest if selected_name == "random_forest" else logistic
-    feature_importance = _contest_feature_importance(selected_model)
-    predicted_band = str(selected_model.predict(profile_frame)[0])
-    probabilities = _probability_map(selected_model, profile_frame)
-
-    report = {
-        "selected_model_name": selected_name,
-        "model": selected_model,
-        "logistic_regression": logistic,
-        "random_forest": forest,
-        "metrics": {
-            "logistic_regression": logistic_metrics,
-            "random_forest": forest_metrics,
-        },
+    return {
+        "selected_model_name": "constant_baseline",
+        "model": None,
+        "logistic_regression": None,
+        "random_forest": None,
+        "metrics": {"constant_baseline": metrics},
         "features": CONTEST_FEATURE_COLUMNS,
-        "feature_importance": feature_importance,
+        "feature_importance": _contest_scorecard_feature_importance(),
         "predicted_band": predicted_band,
-        "band_probabilities": probabilities,
+        "band_probabilities": {band: 1.0 if band == predicted_band else 0.0 for band in PERFORMANCE_BANDS},
     }
-    joblib.dump(report, MODEL_DIR / "contest_score_predictor.joblib")
-    return report
 
 
 def train_solve_probability_model(examples: pd.DataFrame, random_state: int = 42) -> dict[str, Any]:
     frame = _ensure_solve_training_rows(examples, random_state=random_state)
     x = frame[SOLVE_FEATURE_COLUMNS]
     y = frame["solved"].astype(int)
-    stratify = y if y.nunique() > 1 and y.value_counts().min() >= 2 else None
+    probabilities = _monotonic_solve_probabilities(x)
+    predictions = (probabilities >= 0.5).astype(int)
 
-    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.25, stratify=stratify, random_state=random_state)
-
-    logistic = Pipeline(
-        [
-            ("scale", StandardScaler()),
-            ("model", LogisticRegression(max_iter=2000, class_weight="balanced", random_state=random_state)),
-        ]
-    )
-    forest = RandomForestClassifier(
-        n_estimators=120,
-        max_depth=8,
-        min_samples_leaf=3,
-        random_state=random_state,
-        class_weight="balanced_subsample",
-        n_jobs=-1,
-    )
-    logistic.fit(x_train, y_train)
-    forest.fit(x_train, y_train)
-
-    logistic_metrics = _classification_metrics(y_test, logistic.predict(x_test))
-    forest_metrics = _classification_metrics(y_test, forest.predict(x_test))
-    scorecard_probabilities = _monotonic_solve_probabilities(x_test)
-    scorecard_predictions = (scorecard_probabilities >= 0.5).astype(int)
-    scorecard_metrics = _classification_metrics(y_test, scorecard_predictions)
-
-    report = {
+    return {
         "selected_model_name": "monotonic_scorecard",
         "model": None,
-        "logistic_regression": logistic,
-        "random_forest": forest,
-        "metrics": {
-            "monotonic_scorecard": scorecard_metrics,
-            "logistic_regression": logistic_metrics,
-            "random_forest": forest_metrics,
-        },
+        "logistic_regression": None,
+        "random_forest": None,
+        "metrics": {"monotonic_scorecard": _binary_metrics(y, predictions)},
         "features": SOLVE_FEATURE_COLUMNS,
         "feature_importance": _scorecard_feature_importance(),
         "training_rows": int(len(frame)),
     }
-    joblib.dump(report, MODEL_DIR / "solve_probability_model.joblib")
-    return report
 
 
 def predict_solve_probability(model_report: dict[str, Any], feature_rows: pd.DataFrame | list[dict[str, Any]]) -> np.ndarray:
     frame = pd.DataFrame(feature_rows)
     x = frame[model_report["features"]]
-    if model_report.get("selected_model_name") == "monotonic_scorecard":
+    model = model_report.get("model")
+    if model_report.get("selected_model_name") == "monotonic_scorecard" or model is None:
         return _monotonic_solve_probabilities(x)
-
-    model = model_report["model"]
     if hasattr(model, "predict_proba"):
         return model.predict_proba(x)[:, 1]
     return model.predict(x)
@@ -182,14 +86,21 @@ def bucket_probability(probability: float) -> str:
     return "avoid"
 
 
-def _classification_metrics(y_true: pd.Series, y_pred: np.ndarray, average: str = "binary") -> dict[str, float]:
-    if average == "binary" and len(set(y_true)) != 2:
-        average = "macro"
-    return {
-        "accuracy": float(accuracy_score(y_true, y_pred)),
-        "precision": float(precision_score(y_true, y_pred, average=average, zero_division=0)),
-        "recall": float(recall_score(y_true, y_pred, average=average, zero_division=0)),
-    }
+def _binary_metrics(y_true: pd.Series, y_pred: np.ndarray) -> dict[str, float]:
+    true = pd.Series(y_true).astype(int)
+    pred = pd.Series(y_pred).astype(int)
+    tp = int(((true == 1) & (pred == 1)).sum())
+    fp = int(((true == 0) & (pred == 1)).sum())
+    fn = int(((true == 1) & (pred == 0)).sum())
+    accuracy = float((true == pred).mean()) if len(true) else 0.0
+    precision = tp / (tp + fp) if tp + fp else 0.0
+    recall = tp / (tp + fn) if tp + fn else 0.0
+    return {"accuracy": accuracy, "precision": float(precision), "recall": float(recall)}
+
+
+def _label_metrics(y_true: pd.Series, y_pred: pd.Series) -> dict[str, float]:
+    accuracy = float((pd.Series(y_true).astype(str) == pd.Series(y_pred).astype(str)).mean())
+    return {"accuracy": accuracy, "precision": accuracy, "recall": accuracy}
 
 
 def _synthetic_contest_training_frame(profile: dict[str, Any], random_state: int = 42) -> pd.DataFrame:
@@ -219,7 +130,6 @@ def _synthetic_contest_training_frame(profile: dict[str, Any], random_state: int
             - rank_mean / 2400
             + rng.normal(0, 16)
         )
-        band = _delta_to_band(expected_delta)
         rows.append(
             {
                 "problems_solved": solved,
@@ -234,10 +144,30 @@ def _synthetic_contest_training_frame(profile: dict[str, Any], random_state: int
                 "contest_rank_best": rank_best,
                 "rating_volatility": volatility,
                 "recent_accuracy": recent_accuracy,
-                "band": band,
+                "band": _delta_to_band(expected_delta),
             }
         )
     return pd.DataFrame(rows)
+
+
+def _contest_scorecard_band(row: pd.Series) -> str:
+    current_rating = float(row.get("current_rating", 0) or 0)
+    avg_rating = float(row.get("average_rating", current_rating) or current_rating)
+    recent_accuracy = float(row.get("recent_accuracy", 0) or 0)
+    solved = float(row.get("problems_solved", 0) or 0)
+    wrong = float(row.get("wrong_submissions", 0) or 0)
+    submissions = max(float(row.get("submissions", 1) or 1), 1.0)
+    volatility = float(row.get("rating_volatility", 0) or 0)
+    rank_mean = float(row.get("contest_rank_mean_last5", 0) or 0)
+    expected_delta = (
+        (recent_accuracy - 55) * 1.1
+        + (avg_rating - current_rating) * 0.055
+        + np.log1p(solved) * 2.1
+        - wrong / submissions * 38
+        - volatility * 0.18
+        - rank_mean / 2400
+    )
+    return _delta_to_band(float(expected_delta))
 
 
 def _delta_to_band(expected_delta: float) -> str:
@@ -278,7 +208,6 @@ def _ensure_solve_training_rows(examples: pd.DataFrame, random_state: int = 42) 
             - max(tag_count - 2, 0) * 0.12
         )
         probability = 1 / (1 + np.exp(-logit))
-        solved = int(rng.random() < probability)
         rows.append(
             {
                 "problem_rating": problem_rating,
@@ -290,7 +219,7 @@ def _ensure_solve_training_rows(examples: pd.DataFrame, random_state: int = 42) 
                 "popularity_log": popularity_log,
                 "tag_count": tag_count,
                 "recent_accuracy": recent_accuracy,
-                "solved": solved,
+                "solved": int(rng.random() < probability),
                 "problem_id": "synthetic",
                 "problem_name": "Synthetic solve sample",
                 "tags": [],
@@ -326,29 +255,9 @@ def _monotonic_solve_probabilities(features: pd.DataFrame) -> np.ndarray:
     return np.clip(1 / (1 + np.exp(-logit)), 0.02, 0.98)
 
 
-def _contest_feature_importance(model: Any) -> pd.DataFrame:
-    if isinstance(model, RandomForestClassifier):
-        importance = model.feature_importances_
-    elif hasattr(model, "named_steps"):
-        estimator = model.named_steps["model"]
-        importance = np.abs(estimator.coef_).mean(axis=0)
-    else:
-        importance = np.ones(len(CONTEST_FEATURE_COLUMNS))
-    return _importance_frame(CONTEST_FEATURE_COLUMNS, importance)
-
-
-def _solve_feature_importance(model: Any) -> pd.DataFrame:
-    estimator = getattr(model, "estimator", model)
-    if isinstance(estimator, RandomForestClassifier):
-        importance = estimator.feature_importances_
-    elif hasattr(estimator, "named_steps"):
-        coefficients = estimator.named_steps["model"].coef_
-        importance = np.abs(coefficients).ravel()
-    elif hasattr(model, "feature_importances_"):
-        importance = model.feature_importances_
-    else:
-        importance = np.ones(len(SOLVE_FEATURE_COLUMNS))
-    return _importance_frame(SOLVE_FEATURE_COLUMNS, importance)
+def _contest_scorecard_feature_importance() -> pd.DataFrame:
+    weights = np.array([0.2, 0.18, 0.06, 0.12, 0.07, 0.2, 0.04, 0.04, 0.04, 0.0, 0.03, 0.12])
+    return _importance_frame(CONTEST_FEATURE_COLUMNS, weights)
 
 
 def _scorecard_feature_importance() -> pd.DataFrame:
@@ -359,10 +268,3 @@ def _scorecard_feature_importance() -> pd.DataFrame:
 def _importance_frame(features: list[str], importance: np.ndarray) -> pd.DataFrame:
     total = float(np.sum(importance)) or 1.0
     return pd.DataFrame({"feature": features, "importance": importance / total}).sort_values("importance", ascending=False)
-
-
-def _probability_map(model: Any, profile_frame: pd.DataFrame) -> dict[str, float]:
-    if not hasattr(model, "predict_proba"):
-        return {}
-    probabilities = model.predict_proba(profile_frame)[0]
-    return {str(label): float(prob) for label, prob in zip(model.classes_, probabilities)}

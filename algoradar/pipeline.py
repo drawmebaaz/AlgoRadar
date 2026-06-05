@@ -20,9 +20,7 @@ from .features import (
     verdict_frame,
 )
 from .models import train_contest_score_predictor, train_solve_probability_model
-from .recommender import recommend_problems
 from .sample_data import make_sample_bundle
-from .semantic import build_semantic_index, similar_problems
 from .weakness import classify_weakness, predict_weakness_with_model, train_weakness_model
 
 
@@ -56,6 +54,8 @@ def run_analysis(
     submission_limit: int = DEFAULT_SUBMISSION_LIMIT,
     prefer_transformer: bool = False,
     use_sample: bool = False,
+    include_recommendations: bool = True,
+    include_semantic: bool = True,
 ) -> AnalysisResult:
     if use_sample:
         bundle = make_sample_bundle(handle)
@@ -77,14 +77,25 @@ def run_analysis(
     solve_examples = build_solve_examples(submissions, ratings, problems, weakness)
     contest_model = train_contest_score_predictor(profile)
     solve_model = train_solve_probability_model(solve_examples)
-    recommendations = recommend_problems(problems, submissions, profile, weakness, solve_model)
+    if include_recommendations:
+        from .recommender import recommend_problems
 
-    semantic_index = build_semantic_index(problems, prefer_transformer=prefer_transformer)
-    if not recommendations.empty:
+        recommendations = recommend_problems(problems, submissions, profile, weakness, solve_model)
+    else:
+        recommendations = pd.DataFrame()
+
+    semantic_method = "deferred"
+    similar_harder = pd.DataFrame()
+    if include_semantic and not recommendations.empty:
+        from .semantic import build_semantic_index, similar_problems
+
+        semantic_index = build_semantic_index(problems, prefer_transformer=prefer_transformer)
+        semantic_method = semantic_index.method
         reference_id = recommendations.iloc[0]["problem_id"]
         reference = problems[problems["problem_id"] == reference_id].iloc[0]
         similar_harder = similar_problems(reference, problems, semantic_index, top_n=8, harder_only=True)
-    else:
+    elif include_semantic:
+        semantic_method = "tfidf-fallback"
         similar_harder = pd.DataFrame()
 
     return AnalysisResult(
@@ -105,7 +116,7 @@ def run_analysis(
         solve_model=solve_model,
         weakness_model=weakness_model,
         recommendations=recommendations,
-        semantic_method=semantic_index.method,
+        semantic_method=semantic_method,
         similar_harder=similar_harder,
         progress=build_progress_frame(submissions, profile),
     )

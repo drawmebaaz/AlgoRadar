@@ -72,6 +72,7 @@ def analyze_external_platforms(
     leetcode_handle: str = "",
     codechef_handle: str = "",
     force_refresh: bool = False,
+    include_recommendations: bool = True,
 ) -> dict[str, PlatformAnalysis]:
     tasks: dict[str, tuple[Callable[..., PlatformAnalysis], str]] = {}
     if leetcode_handle.strip():
@@ -85,7 +86,7 @@ def analyze_external_platforms(
     results: dict[str, PlatformAnalysis] = {}
     with ThreadPoolExecutor(max_workers=max(1, len(tasks))) as executor:
         futures = {
-            key: executor.submit(fn, handle, force_refresh)
+            key: executor.submit(fn, handle, force_refresh, include_recommendations)
             for key, (fn, handle) in tasks.items()
         }
         for key, future in futures.items():
@@ -98,7 +99,7 @@ def analyze_external_platforms(
     return results
 
 
-def analyze_leetcode(username: str, force_refresh: bool = False) -> PlatformAnalysis:
+def analyze_leetcode(username: str, force_refresh: bool = False, include_recommendations: bool = True) -> PlatformAnalysis:
     try:
         payload = _cached_json(
             CACHE_DIR / f"leetcode_profile_{_safe_key(username)}.json",
@@ -115,7 +116,11 @@ def analyze_leetcode(username: str, force_refresh: bool = False) -> PlatformAnal
         activity = _leetcode_activity(payload)
         contest_trend = _leetcode_contest_trend(payload)
         weakness = _leetcode_weakness(tags, difficulty, profile)
-        recommendations = _safe_leetcode_recommendations(profile, weakness, activity, force_refresh)
+        recommendations = (
+            _safe_leetcode_recommendations(profile, weakness, activity, force_refresh)
+            if include_recommendations
+            else pd.DataFrame()
+        )
 
         return PlatformAnalysis(
             platform="LeetCode",
@@ -140,7 +145,7 @@ def analyze_leetcode(username: str, force_refresh: bool = False) -> PlatformAnal
         return _empty_analysis("LeetCode", username, "error", str(exc))
 
 
-def analyze_codechef(handle: str, force_refresh: bool = False) -> PlatformAnalysis:
+def analyze_codechef(handle: str, force_refresh: bool = False, include_recommendations: bool = True) -> PlatformAnalysis:
     try:
         html = _cached_text(
             CACHE_DIR / f"codechef_profile_{_safe_key(handle)}.html",
@@ -155,7 +160,7 @@ def analyze_codechef(handle: str, force_refresh: bool = False) -> PlatformAnalys
         difficulty = _codechef_difficulty(profile)
         activity = _codechef_solved_sections(html)
         weakness = _codechef_weakness(profile, contest_trend)
-        recommendations = _safe_codechef_recommendations(profile, force_refresh)
+        recommendations = _safe_codechef_recommendations(profile, force_refresh) if include_recommendations else pd.DataFrame()
 
         return PlatformAnalysis(
             platform="CodeChef",

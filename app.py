@@ -33,7 +33,15 @@ def stretch_kwargs(component) -> dict[str, bool | str]:
 
 
 @st.cache_resource(show_spinner=False)
-def cached_analysis(handle: str, force_refresh: bool, prefer_transformer: bool, use_sample: bool, submission_limit: int):
+def cached_analysis(
+    handle: str,
+    force_refresh: bool,
+    prefer_transformer: bool,
+    use_sample: bool,
+    submission_limit: int,
+    include_recommendations: bool,
+    include_semantic: bool,
+):
     from algoradar.pipeline import run_analysis
 
     return run_analysis(
@@ -42,15 +50,23 @@ def cached_analysis(handle: str, force_refresh: bool, prefer_transformer: bool, 
         prefer_transformer=prefer_transformer,
         use_sample=use_sample,
         submission_limit=submission_limit,
+        include_recommendations=include_recommendations,
+        include_semantic=include_semantic,
     )
 
 
 @st.cache_resource(show_spinner=False)
-def cached_external_analysis(leetcode_handle: str, codechef_handle: str, force_refresh: bool):
+def cached_external_analysis(
+    leetcode_handle: str,
+    codechef_handle: str,
+    force_refresh: bool,
+    include_recommendations: bool,
+):
     return analyze_external_platforms(
         leetcode_handle=leetcode_handle,
         codechef_handle=codechef_handle,
         force_refresh=force_refresh,
+        include_recommendations=include_recommendations,
     )
 
 
@@ -110,23 +126,27 @@ def main() -> None:
     external_results: dict = {}
 
     if _needs_codeforces(screen, active_args) and active_args["codeforces"]:
+        include_recommendations = screen == "Recommendations"
         cf_args = {
             "handle": active_args["codeforces"],
             "force_refresh": active_args["force_refresh"],
             "prefer_transformer": active_args["prefer_transformer"],
             "use_sample": False,
-            "submission_limit": 2500,
+            "submission_limit": 2500 if screen in {"Codeforces", "Recommendations"} else 1200,
+            "include_recommendations": include_recommendations,
+            "include_semantic": include_recommendations,
         }
-        with st.spinner("Running Codeforces ML pipeline..."):
+        with st.spinner("Loading Codeforces profile and submissions..."):
             result = cached_analysis(**cf_args)
 
     external_handles = _external_handles_for_screen(screen, active_args)
     if external_handles["leetcode"] or external_handles["codechef"]:
-        with st.spinner("Loading cached LeetCode and CodeChef data..."):
+        with st.spinner("Loading platform profile data..."):
             external_results = cached_external_analysis(
                 external_handles["leetcode"],
                 external_handles["codechef"],
                 active_args["force_refresh"],
+                screen == "Recommendations",
             )
 
     source_label = _source_label(result, external_results)
