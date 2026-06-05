@@ -8,7 +8,6 @@ from typing import Any
 import pandas as pd
 
 from .config import DATA_DIR
-from .models import bucket_probability
 
 CALIBRATION_PATH = DATA_DIR / "platform_calibration.csv"
 
@@ -50,6 +49,16 @@ LEETCODE_SLOT_PRIORS = {
     "Q3": 1700.0,
     "Q4": 2250.0,
 }
+
+
+def _bucket_probability(probability: float) -> str:
+    if probability >= 0.75:
+        return "confidence"
+    if probability >= 0.45:
+        return "growth"
+    if probability >= 0.25:
+        return "stretch"
+    return "avoid"
 
 
 def score_saved_profile_problem(
@@ -172,7 +181,7 @@ def score_saved_profile_problem(
         "popularity": int(popularity or 0),
         "solve_probability": probability,
         "solve_probability_pct": round(probability * 100, 1),
-        "bucket": bucket_probability(probability),
+        "bucket": _bucket_probability(probability),
         "anchor_rating": round(anchor_rating, 0),
         "anchor_cf_equivalent": round(anchor_rating, 0),
         "total_solved": round(total_solved, 1),

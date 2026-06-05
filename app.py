@@ -6,7 +6,6 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from algoradar import run_analysis
 from algoradar.platforms import analyze_external_platforms, build_combined_overview, lookup_leetcode_problem
 from algoradar.solve_probability import (
     available_probability_tags,
@@ -35,6 +34,8 @@ def stretch_kwargs(component) -> dict[str, bool | str]:
 
 @st.cache_resource(show_spinner=False)
 def cached_analysis(handle: str, force_refresh: bool, prefer_transformer: bool, use_sample: bool, submission_limit: int):
+    from algoradar.pipeline import run_analysis
+
     return run_analysis(
         handle=handle,
         force_refresh=force_refresh,
