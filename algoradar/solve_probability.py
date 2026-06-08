@@ -88,31 +88,40 @@ def score_saved_profile_problem(
     tag_avg_rating = float(tag_strength["tag_avg_rating"])
 
     rating_gap = target_cf - anchor_rating
+    ceiling_gap = tag_rating_ceiling - target_cf
+    avg_gap = tag_avg_rating - target_cf
     volume_score = _bounded_log(tag_solved, 90)
     overall_volume_score = _bounded_log(total_solved, 2200)
-    ceiling_score = _sigmoid((tag_rating_ceiling - target_cf + 70) / 260)
-    avg_rating_score = _sigmoid((tag_avg_rating - target_cf + 80) / 320)
+    ceiling_score = _sigmoid((ceiling_gap + 80) / 250)
+    avg_rating_score = _sigmoid((avg_gap + 80) / 330)
     popularity_score = _bounded_log(popularity, 70000)
     platform_fit = _platform_fit(platform, profile_strength)
-    tag_penalty = min(len(tags), 5) * 0.04
+    calibration_weight = float(calibration["training_weight"])
+    tag_penalty = min(len(tags), 5) * 0.025
+    cold_tag_penalty = 0.22 if tags and tag_solved < 3 else 0.0
 
     logit = (
-        -1.05
-        - rating_gap / 330
-        + volume_score * 0.48
-        + ceiling_score * 0.48
-        + avg_rating_score * 0.22
-        + overall_volume_score * 0.15
+        -0.72
+        - rating_gap / 285
+        + volume_score * 0.56
+        + ceiling_score * 0.62
+        + avg_rating_score * 0.24
+        + overall_volume_score * 0.12
         + popularity_score * 0.08
         + platform_fit * 0.06
+        + calibration_weight * 0.05
         - tag_penalty
+        - cold_tag_penalty
     )
     raw_probability = _sigmoid(logit)
 
     # Solving a problem near the user's calibrated anchor should usually be a
     # growth attempt, not a near-guaranteed solve. The cap keeps the curve
     # monotonic and prevents solved-volume alone from producing 95-98% claims.
-    confidence_cap = 0.58 + 0.36 * _sigmoid((-rating_gap - 60) / 260)
+    confidence_cap = 0.57 + 0.34 * _sigmoid((-rating_gap - 80) / 260)
+    confidence_cap += 0.06 * _sigmoid((ceiling_gap - 150) / 280)
+    if tag_solved < 3 and tags:
+        confidence_cap = min(confidence_cap, 0.66)
     probability = float(max(0.02, min(raw_probability, confidence_cap, 0.92)))
 
     factors = pd.DataFrame(
@@ -143,6 +152,11 @@ def score_saved_profile_problem(
                 "impact": round(ceiling_score, 3),
             },
             {
+                "factor": "Hardest solved minus target",
+                "value": round(ceiling_gap, 0),
+                "impact": "stronger when positive",
+            },
+            {
                 "factor": "Average solved difficulty on tags",
                 "value": round(tag_avg_rating, 0),
                 "impact": round(avg_rating_score, 3),
@@ -161,6 +175,11 @@ def score_saved_profile_problem(
                 "factor": "Problem tags used",
                 "value": ", ".join(tags) if tags else "None selected",
                 "impact": "automatic when available",
+            },
+            {
+                "factor": "Calibration reliability",
+                "value": calibration["confidence"],
+                "impact": round(calibration_weight, 3),
             },
         ]
     )

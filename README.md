@@ -1,10 +1,12 @@
 # AlgoRadar
 
+![AlgoRadar social preview](social_assets/algoradar-00-social-card.png)
+
 **AlgoRadar | AI Competitive Programming Weakness Analyzer and Problem Recommender**
 
 AlgoRadar is a machine-learning powered competitive programming intelligence dashboard for Codeforces, CodeChef, and LeetCode. A user enters any combination of the three handles, and the app returns platform-wise analytics, weakness signals, recommendations, and solve-probability estimates from the handles provided.
 
-The goal is not just to show charts. AlgoRadar includes a real ML pipeline where the platform data supports it: API ingestion, data cleaning, feature engineering, baseline rules, train/test split, model metrics, problem ranking, and semantic similarity search. Codeforces has the deepest model because its official API exposes verdict-level submissions. LeetCode and CodeChef are normalized into the same product experience using their public profile, contest, topic, and practice-problem data.
+The goal is not just to show charts. AlgoRadar includes an end-to-end ML-style analytics pipeline where the platform data supports it: API ingestion, caching, data cleaning, feature engineering, baseline rules, model metrics, calibrated scorecards, problem ranking, and semantic similarity search. Codeforces has the deepest signal because its official API exposes verdict-level submissions. LeetCode and CodeChef are normalized into the same product experience using their public profile, contest, topic, and practice-problem data.
 
 ## Features
 
@@ -22,9 +24,9 @@ The goal is not just to show charts. AlgoRadar includes a real ML pipeline where
 - Solved problem difficulty distribution
 - Contest performance trend
 - Weakness classifier for every tag
-- Rule-based baseline compared with an ML classifier
+- Rule-based weakness baseline with model-style metrics
 - Next-contest performance band prediction
-- Calibrated problem solve-probability model
+- Calibrated, monotonic problem solve-probability model
 - Confidence/growth/stretch recommendation queues
 - Similar-but-harder problem retrieval
 - Progress tracking
@@ -39,6 +41,16 @@ The goal is not just to show charts. AlgoRadar includes a real ML pipeline where
 5. Recommendations
 6. Solve probability
 
+## Visual Preview
+
+| Multi-platform profile | Weakness map |
+| --- | --- |
+| ![Multi-platform profile](social_assets/algoradar-01-multi-platform-profile.png) | ![Weakness map](social_assets/algoradar-02-weakness-map.png) |
+
+| Recommendations | Solve probability |
+| --- | --- |
+| ![Platform-separated recommendations](social_assets/algoradar-03-recommendations.png) | ![Calibrated solve probability](social_assets/algoradar-04-solve-probability.png) |
+
 ## Tech Stack
 
 - Python
@@ -52,17 +64,46 @@ The goal is not just to show charts. AlgoRadar includes a real ML pipeline where
 - TF-IDF vector search
 - Optional Sentence Transformers embeddings
 
-## ML Project Levels
+## Recommendation and Probability Logic
 
-| Level | Module | What it teaches |
-| --- | --- | --- |
-| Level 0 | ContestScore Predictor | train/test split, logistic regression, random forest, accuracy, precision, recall |
-| Level 1 | CF Analytics Dashboard | API handling, data cleaning, visualization, analytics thinking |
-| Level 2 | Weakness Classifier | feature design, rule baseline, ML comparison, explainability |
-| Level 3 | Solve Probability Model | classification, probability buckets, feature importance |
-| Level 4 | Problem Recommender | ranking, personalization, content-based recommendation |
-| Level 5 | Similar Problem Finder | vector search, semantic similarity, nearest-neighbor retrieval |
-| Level 6 | Final AlgoRadar | complete ML product with dashboard, recommendations, solve probability, and progress tracking |
+AlgoRadar does not recommend problems by rating alone. Every recommendation is scored from a user-specific feature row built from the handle data available for that platform.
+
+The solve-probability score uses 14 features, including:
+
+- problem rating or calibrated difficulty
+- user rating
+- rating gap
+- tag accuracy
+- attempts on related tags
+- solved count on related tags
+- average solved difficulty on related tags
+- hardest solved difficulty on related tags
+- total solved volume
+- recent accuracy
+- inferred recent failures
+- problem popularity
+- tag count
+- rating-source confidence
+
+Accuracy is intentionally downweighted. Public accepted submissions can be inflated by editorials or AI help, so the model gives more importance to solved volume, tag depth, hardest solved difficulty, and the gap between the target problem and the user's demonstrated ceiling.
+
+Recommendations are then ranked using:
+
+- solve-probability bucket fit
+- weak-tag similarity
+- hardest-solved ceiling gap
+- available evidence strength
+- problem popularity
+- rating confidence
+- diversity across tags and rating bands
+
+The result is split into platform-specific queues:
+
+- `confidence`: high-probability problems for momentum
+- `growth`: sweet-spot problems for skill improvement
+- `stretch`: harder problems that are still realistic
+
+Codeforces uses the richest signal because it has official problem ratings, tags, solved counts, and verdict-level user submissions. CodeChef and LeetCode use dynamic platform-specific scorecards from public rating, topic, contest, difficulty, and practice-problem signals instead of fixed hardcoded percentages.
 
 ## How It Works
 
@@ -74,11 +115,12 @@ AlgoRadar runs this pipeline:
 4. Convert raw platform data into normalized pandas feature tables.
 5. Compute analytics such as rating accuracy, tag/topic coverage, verdict distribution, difficulty mix, and contest trends.
 6. Classify weakness using simple rules first.
-7. Train a random forest weakness model and compare it with the rule baseline for Codeforces.
-8. Train a next-contest performance band predictor.
-9. Estimate solve probability from solved volume and solved-difficulty strength on relevant tags, using all provided handles where possible.
-10. Rank problems into confidence, growth, and stretch buckets.
-11. Build a similar-problem search layer using TF-IDF by default.
+7. Build a rule-based weakness baseline and expose model-style metrics for explainability.
+8. Estimate the next-contest performance band from contest history, rating trend, solved volume, and recent accuracy.
+9. Build 14-feature solve-probability rows from rating gap, solved depth, tag evidence, recent failures, and popularity.
+10. Apply a calibrated monotonic scorecard so harder problems do not randomly receive higher probability.
+11. Rank problems into confidence, growth, and stretch queues with duplicate and diversity controls.
+12. Build a similar-problem search layer using TF-IDF by default.
 
 The app uses live Codeforces data by default. If the API is unavailable, the backend has a reproducible sample-data fallback so the pipeline can still be tested.
 
@@ -281,6 +323,22 @@ python -m pytest -q
 python3 -m pytest -q
 ```
 
+## Regenerate Social Assets
+
+The README preview images are generated locally so the visuals stay consistent with the product language.
+
+#### Windows
+
+```powershell
+python scripts\generate_social_assets.py
+```
+
+#### macOS / Linux
+
+```bash
+python3 scripts/generate_social_assets.py
+```
+
 ## Troubleshooting
 
 Most setup errors come from running the app inside an existing Anaconda/base environment that already has old packages installed. The safest fix is to use the project virtual environment from the setup section.
@@ -366,9 +424,16 @@ AlgoRadar/
     sample_data.py               Reproducible fallback data
     semantic.py                  TF-IDF / MiniLM similar-problem retrieval
     solve_probability.py         Cross-platform solve-probability scorecard
-    weakness.py                  Rule baseline and ML weakness classifier
+    weakness.py                  Rule baseline and weakness scoring
   scripts/
     run_analysis.py              CLI pipeline runner
+    generate_social_assets.py    Rebuild README/social preview images
+  social_assets/
+    algoradar-00-social-card.png
+    algoradar-01-multi-platform-profile.png
+    algoradar-02-weakness-map.png
+    algoradar-03-recommendations.png
+    algoradar-04-solve-probability.png
   tests/
     test_pipeline.py             Smoke tests for the ML pipeline
     test_platforms.py            Non-network tests for platform normalization
@@ -397,4 +462,5 @@ AlgoRadar classifies recommended problems into:
 - First-time LeetCode/CodeChef recommendation pulls can take a few seconds because the app builds local caches. Reopening the same handles is much faster.
 - The app analyzes the latest 2,500 Codeforces submissions for a practical balance of speed and signal.
 - The recommender prefilters the problemset before model scoring so the app stays responsive.
-- The weakness classifier intentionally starts with rules before comparing with ML. This mirrors real ML workflows where a baseline matters.
+- The weakness classifier intentionally starts with transparent rules and model-style metrics. This mirrors real ML workflows where a baseline matters before collecting larger labeled outcome data.
+- Social preview images can be regenerated with `python scripts/generate_social_assets.py`.

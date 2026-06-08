@@ -69,6 +69,31 @@ def test_same_rating_codeforces_problem_is_not_overconfident() -> None:
     assert score["solve_probability_pct"] < 75
 
 
+def test_tag_ceiling_and_volume_raise_probability() -> None:
+    strong_cf = SimpleNamespace(
+        profile={"problems_solved": 260, "current_rating": 1500, "max_rating": 1600},
+        tag_stats=pd.DataFrame(
+            [
+                {"tag": "dp", "solved": 42, "avg_rating_solved": 1450, "max_rating_solved": 1850},
+            ]
+        ),
+    )
+    weak_cf = SimpleNamespace(
+        profile={"problems_solved": 260, "current_rating": 1500, "max_rating": 1600},
+        tag_stats=pd.DataFrame(
+            [
+                {"tag": "dp", "solved": 2, "avg_rating_solved": 900, "max_rating_solved": 1000},
+            ]
+        ),
+    )
+
+    strong = score_saved_profile_problem("Codeforces", 1600, ["dp"], 6000, strong_cf, {})
+    weak = score_saved_profile_problem("Codeforces", 1600, ["dp"], 6000, weak_cf, {})
+
+    assert strong["solve_probability"] > weak["solve_probability"]
+    assert weak["solve_probability_pct"] < 70
+
+
 def test_platform_difficulty_calibration_uses_mapping_csv() -> None:
     codechef = native_to_cf_equivalent("CodeChef", native_rating=1450)
     leetcode_medium = native_to_cf_equivalent("LeetCode", leetcode_difficulty="Medium")

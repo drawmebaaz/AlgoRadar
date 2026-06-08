@@ -33,11 +33,11 @@ def train_contest_score_predictor(profile: dict[str, Any], random_state: int = 4
     predicted_band = str(_contest_scorecard_band(profile_frame.iloc[0]))
 
     return {
-        "selected_model_name": "constant_baseline",
+        "selected_model_name": "contest_scorecard",
         "model": None,
         "logistic_regression": None,
         "random_forest": None,
-        "metrics": {"constant_baseline": metrics},
+        "metrics": {"contest_scorecard": metrics},
         "features": CONTEST_FEATURE_COLUMNS,
         "feature_importance": _contest_scorecard_feature_importance(),
         "predicted_band": predicted_band,
@@ -47,13 +47,14 @@ def train_contest_score_predictor(profile: dict[str, Any], random_state: int = 4
 
 def train_solve_probability_model(examples: pd.DataFrame, random_state: int = 42) -> dict[str, Any]:
     frame = _ensure_solve_training_rows(examples, random_state=random_state)
+    frame = _ensure_feature_columns(frame, SOLVE_FEATURE_COLUMNS)
     x = frame[SOLVE_FEATURE_COLUMNS]
     y = frame["solved"].astype(int)
     probabilities = _monotonic_solve_probabilities(x)
     predictions = (probabilities >= 0.5).astype(int)
 
     return {
-        "selected_model_name": "monotonic_scorecard",
+        "selected_model_name": "monotonic_scorecard_v2",
         "model": None,
         "logistic_regression": None,
         "random_forest": None,
@@ -66,9 +67,10 @@ def train_solve_probability_model(examples: pd.DataFrame, random_state: int = 42
 
 def predict_solve_probability(model_report: dict[str, Any], feature_rows: pd.DataFrame | list[dict[str, Any]]) -> np.ndarray:
     frame = pd.DataFrame(feature_rows)
+    frame = _ensure_feature_columns(frame, model_report["features"])
     x = frame[model_report["features"]]
     model = model_report.get("model")
-    if model_report.get("selected_model_name") == "monotonic_scorecard" or model is None:
+    if str(model_report.get("selected_model_name", "")).startswith("monotonic_scorecard") or model is None:
         return _monotonic_solve_probabilities(x)
     if hasattr(model, "predict_proba"):
         return model.predict_proba(x)[:, 1]
@@ -191,21 +193,30 @@ def _ensure_solve_training_rows(examples: pd.DataFrame, random_state: int = 42) 
         problem_rating = float(rng.choice(np.arange(800, 2400, 100)))
         tag_accuracy = float(np.clip(rng.normal(58, 21), 0, 100))
         attempts_on_tag = float(max(0, rng.normal(28, 18)))
+        user_rating = float(np.clip(rng.normal(base_rating, 230), 800, 2400))
+        tag_solved_count = float(max(0, rng.normal(attempts_on_tag * 0.5, 9)))
+        tag_avg_rating_solved = float(np.clip(user_rating - rng.normal(80, 180), 700, 2600))
+        tag_max_rating_solved = float(np.clip(tag_avg_rating_solved + abs(rng.normal(180, 160)), 700, 3500))
         recent_failures = float(max(0, rng.normal(4, 3)))
         recent_accuracy = float(np.clip(rng.normal(60, 17), 0, 100))
-        user_rating = float(np.clip(rng.normal(base_rating, 230), 800, 2400))
         rating_gap = problem_rating - user_rating
         popularity_log = float(np.clip(rng.normal(8.1, 1.8), 1.0, 12.0))
         tag_count = float(rng.integers(1, 5))
+        solved_volume_log = float(np.clip(rng.normal(5.4, 1.1), 1.5, 8.2))
+        rating_confidence = float(rng.choice([1.0, 0.65], p=[0.82, 0.18]))
         logit = (
-            1.35
-            - rating_gap / 285
-            + (tag_accuracy - 50) / 30
-            + (recent_accuracy - 55) / 38
-            + np.log1p(attempts_on_tag) / 8
-            + popularity_log / 18
-            - recent_failures / 4.8
-            - max(tag_count - 2, 0) * 0.12
+            0.25
+            - rating_gap / 260
+            + np.log1p(tag_solved_count) * 0.16
+            + (tag_max_rating_solved - problem_rating) / 850
+            + (tag_avg_rating_solved - problem_rating) / 1200
+            + solved_volume_log / 18
+            + popularity_log / 30
+            + (tag_accuracy - 50) / 115
+            + (recent_accuracy - 55) / 130
+            - recent_failures / 7.5
+            - max(tag_count - 2, 0) * 0.1
+            - (1 - rating_confidence) * 0.18
         )
         probability = 1 / (1 + np.exp(-logit))
         rows.append(
@@ -215,10 +226,15 @@ def _ensure_solve_training_rows(examples: pd.DataFrame, random_state: int = 42) 
                 "rating_gap": rating_gap,
                 "tag_accuracy": tag_accuracy,
                 "attempts_on_tag": attempts_on_tag,
+                "tag_solved_count": tag_solved_count,
+                "tag_avg_rating_solved": tag_avg_rating_solved,
+                "tag_max_rating_solved": tag_max_rating_solved,
                 "recent_failures": recent_failures,
                 "popularity_log": popularity_log,
                 "tag_count": tag_count,
                 "recent_accuracy": recent_accuracy,
+                "solved_volume_log": solved_volume_log,
+                "rating_confidence": rating_confidence,
                 "solved": int(rng.random() < probability),
                 "problem_id": "synthetic",
                 "problem_name": "Synthetic solve sample",
@@ -232,27 +248,70 @@ def _ensure_solve_training_rows(examples: pd.DataFrame, random_state: int = 42) 
     return pd.concat([examples, synthetic], ignore_index=True)
 
 
+def _ensure_feature_columns(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    result = frame.copy()
+    for column in columns:
+        if column in result.columns:
+            continue
+        result[column] = _default_feature_value(column, result)
+    return result
+
+
+def _default_feature_value(column: str, frame: pd.DataFrame) -> float:
+    if column == "rating_gap" and {"problem_rating", "user_rating"}.issubset(frame.columns):
+        return frame["problem_rating"].astype(float) - frame["user_rating"].astype(float)
+    if column == "tag_avg_rating_solved" and "user_rating" in frame.columns:
+        return frame["user_rating"].astype(float) - 180
+    if column == "tag_max_rating_solved" and "user_rating" in frame.columns:
+        return frame["user_rating"].astype(float) - 100
+    if column == "solved_volume_log":
+        return 0.0
+    if column == "rating_confidence":
+        return 0.7
+    return 0.0
+
+
 def _monotonic_solve_probabilities(features: pd.DataFrame) -> np.ndarray:
     frame = features.copy()
     rating_gap = frame["problem_rating"].astype(float) - frame["user_rating"].astype(float)
     tag_accuracy = frame["tag_accuracy"].astype(float).clip(0, 100)
     attempts = frame["attempts_on_tag"].astype(float).clip(lower=0)
+    tag_solved = frame["tag_solved_count"].astype(float).clip(lower=0)
+    tag_avg_rating = frame["tag_avg_rating_solved"].astype(float).clip(lower=0)
+    tag_max_rating = frame["tag_max_rating_solved"].astype(float).clip(lower=0)
     recent_failures = frame["recent_failures"].astype(float).clip(lower=0)
     popularity = frame["popularity_log"].astype(float).clip(lower=0)
     tag_count = frame["tag_count"].astype(float).clip(lower=0)
     recent_accuracy = frame["recent_accuracy"].astype(float).clip(0, 100)
+    solved_volume = frame["solved_volume_log"].astype(float).clip(lower=0)
+    rating_confidence = frame["rating_confidence"].astype(float).clip(0.4, 1.0)
+
+    ceiling_gap = tag_max_rating - frame["problem_rating"].astype(float)
+    avg_gap = tag_avg_rating - frame["problem_rating"].astype(float)
+    volume_strength = np.log1p(tag_solved) / 4.6
+    ceiling_strength = 1 / (1 + np.exp(-(ceiling_gap + 80) / 260))
+    avg_strength = 1 / (1 + np.exp(-(avg_gap + 80) / 340))
 
     logit = (
-        0.85
-        - rating_gap / 285
-        + (tag_accuracy - 50) / 30
-        + (recent_accuracy - 55) / 42
-        + np.log1p(attempts) / 9
-        + popularity / 24
-        - recent_failures / 4.8
-        - np.maximum(tag_count - 2, 0) * 0.14
+        -0.35
+        - rating_gap / 275
+        + volume_strength * 0.55
+        + ceiling_strength * 0.52
+        + avg_strength * 0.24
+        + np.log1p(attempts) / 18
+        + solved_volume / 34
+        + popularity / 34
+        + (tag_accuracy - 50) / 120
+        + (recent_accuracy - 55) / 150
+        - recent_failures / 7.2
+        - np.maximum(tag_count - 2, 0) * 0.1
+        - (1 - rating_confidence) * 0.22
     )
-    return np.clip(1 / (1 + np.exp(-logit)), 0.02, 0.98)
+    raw = 1 / (1 + np.exp(-logit))
+    same_level_cap = 0.58 + 0.34 / (1 + np.exp((rating_gap + 80) / 260))
+    ceiling_cap_bonus = 0.06 / (1 + np.exp(-(ceiling_gap - 150) / 280))
+    confidence_cap = np.clip(same_level_cap + ceiling_cap_bonus, 0.18, 0.92)
+    return np.clip(np.minimum(raw, confidence_cap), 0.02, 0.94)
 
 
 def _contest_scorecard_feature_importance() -> pd.DataFrame:
@@ -261,7 +320,7 @@ def _contest_scorecard_feature_importance() -> pd.DataFrame:
 
 
 def _scorecard_feature_importance() -> pd.DataFrame:
-    weights = np.array([0.28, 0.18, 0.28, 0.2, 0.08, 0.16, 0.06, 0.04, 0.1])
+    weights = np.array([0.2, 0.14, 0.2, 0.05, 0.05, 0.13, 0.1, 0.13, 0.08, 0.04, 0.03, 0.03, 0.02, 0.02])
     return _importance_frame(SOLVE_FEATURE_COLUMNS, weights)
 
 

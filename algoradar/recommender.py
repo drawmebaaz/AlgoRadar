@@ -35,7 +35,8 @@ def recommend_problems(
         if "level" in tag_stats.columns
         else tag_stats
     )
-    target_tags = weak_tags.sort_values("priority_score", ascending=False)["tag"].head(8).tolist() if "priority_score" in weak_tags.columns else []
+    target_weights = _target_tag_weights(weak_tags)
+    target_tags = list(target_weights)
     candidate = _prefilter_candidates(candidate, profile, target_tags, candidate_limit)
 
     feature_rows = [make_problem_feature_row(row, profile, tag_stats) for _, row in candidate.iterrows()]
@@ -43,23 +44,37 @@ def recommend_problems(
     probabilities = predict_solve_probability(solve_model_report, feature_frame[SOLVE_FEATURE_COLUMNS])
     candidate["solve_probability"] = probabilities
     candidate["bucket"] = [bucket_probability(probability) for probability in probabilities]
+    candidate["probability_bucket"] = candidate["bucket"]
     candidate["rating_distance"] = (candidate["rating"] - float(profile.get("current_rating", 1200))).abs()
-    candidate["tag_similarity"] = candidate["tags"].apply(lambda tags: tag_similarity_score(tags, target_tags))
+    candidate["tag_similarity"] = candidate["tags"].apply(lambda tags: _weighted_tag_score(tags, target_weights))
+    candidate["tag_solved_count"] = feature_frame["tag_solved_count"].to_numpy()
+    candidate["tag_ceiling_gap"] = feature_frame["tag_max_rating_solved"].to_numpy() - candidate["rating"].astype(float)
+    candidate["rating_confidence"] = feature_frame["rating_confidence"].to_numpy()
     candidate["popularity_score"] = normalize(np.log1p(candidate["solved_count"].fillna(0)))
+    candidate["evidence_score"] = normalize(np.log1p(candidate["tag_solved_count"].fillna(0)))
+    candidate["ceiling_score"] = 1 / (1 + np.exp(-(candidate["tag_ceiling_gap"] + 100) / 300))
 
     probability = candidate["solve_probability"]
     growth_center = 0.6
+    growth_fit = (1 - (probability - growth_center).abs() / 0.6).clip(lower=0)
+    quality_score = candidate["popularity_score"] * candidate["rating_confidence"]
     candidate["learning_value"] = (
-        1.2 * (1 - (probability - growth_center).abs())
-        + 0.42 * candidate["tag_similarity"]
-        + 0.22 * candidate["popularity_score"]
-        - 0.00038 * candidate["rating_distance"]
+        1.15 * growth_fit
+        + 0.52 * candidate["tag_similarity"]
+        + 0.32 * candidate["ceiling_score"]
+        + 0.22 * candidate["evidence_score"]
+        + 0.18 * quality_score
+        - 0.00028 * candidate["rating_distance"]
     )
-    candidate["rank_score"] = candidate["learning_value"] + candidate["solve_probability"] * 0.25
+    candidate["rank_score"] = candidate["learning_value"] + candidate["solve_probability"] * 0.16
 
-    confidence = _pick_bucket(candidate, "confidence", confidence_count, sort_by=["solve_probability", "rank_score"])
-    growth = _pick_bucket(candidate, "growth", growth_count, sort_by=["rank_score", "tag_similarity"])
-    stretch = _pick_bucket(candidate, "stretch", stretch_count, sort_by=["rank_score", "tag_similarity"])
+    selected_ids: set[str] = set()
+    user_rating = float(profile.get("current_rating", 1200) or 1200)
+    confidence = _pick_bucket(candidate, "confidence", confidence_count, sort_by=["solve_probability", "rank_score"], excluded_ids=selected_ids, user_rating=user_rating)
+    selected_ids.update(confidence["problem_id"].astype(str).tolist())
+    growth = _pick_bucket(candidate, "growth", growth_count, sort_by=["rank_score", "tag_similarity"], excluded_ids=selected_ids, user_rating=user_rating)
+    selected_ids.update(growth["problem_id"].astype(str).tolist())
+    stretch = _pick_bucket(candidate, "stretch", stretch_count, sort_by=["rank_score", "tag_similarity"], excluded_ids=selected_ids, user_rating=user_rating)
 
     recommendations = pd.concat([confidence, growth, stretch], ignore_index=True)
     if recommendations.empty:
@@ -106,15 +121,66 @@ def score_custom_problem(
     }
 
 
-def _pick_bucket(candidate: pd.DataFrame, bucket: str, count: int, sort_by: list[str]) -> pd.DataFrame:
-    frame = candidate[candidate["bucket"] == bucket].copy()
+def _pick_bucket(
+    candidate: pd.DataFrame,
+    bucket: str,
+    count: int,
+    sort_by: list[str],
+    excluded_ids: set[str] | None = None,
+    user_rating: float = 1200.0,
+) -> pd.DataFrame:
+    excluded_ids = excluded_ids or set()
+    available = candidate[~candidate["problem_id"].astype(str).isin(excluded_ids)].copy()
+    frame = available[available["probability_bucket"] == bucket].copy()
     if frame.empty and bucket == "confidence":
-        frame = candidate[candidate["solve_probability"] > 0.68].copy()
+        frame = available[available["solve_probability"] > 0.68].copy()
     if frame.empty and bucket == "growth":
-        frame = candidate[candidate["solve_probability"].between(0.38, 0.78)].copy()
+        frame = available[available["solve_probability"].between(0.38, 0.78)].copy()
     if frame.empty and bucket == "stretch":
-        frame = candidate[candidate["solve_probability"].between(0.18, 0.5)].copy()
-    return frame.sort_values(sort_by, ascending=False).head(count)
+        frame = available[available["solve_probability"].between(0.18, 0.5)].copy()
+    sorted_frame = frame.sort_values(sort_by, ascending=False)
+    picked = _diversified_head(sorted_frame, count)
+
+    if len(picked) < count:
+        picked_ids = set(picked["problem_id"].astype(str).tolist()) if not picked.empty else set()
+        filler_pool = available[~available["problem_id"].astype(str).isin(picked_ids)].copy()
+        filler_pool = _bucket_fallback_pool(filler_pool, bucket, user_rating)
+        if not filler_pool.empty:
+            target_probability = {"confidence": 0.82, "growth": 0.6, "stretch": 0.34}.get(bucket, 0.6)
+            filler_pool["bucket_fit"] = (1 - (filler_pool["solve_probability"] - target_probability).abs() / 0.7).clip(lower=0)
+            filler_pool["fallback_score"] = (
+                filler_pool["bucket_fit"] * 0.78
+                + filler_pool["rank_score"] * 0.28
+                + filler_pool["tag_similarity"] * 0.18
+            )
+            filler = _diversified_head(filler_pool.sort_values(["fallback_score", "rank_score"], ascending=False), count - len(picked))
+            picked = pd.concat([picked, filler], ignore_index=True)
+
+    if not picked.empty:
+        picked = picked.copy()
+        picked["bucket"] = bucket
+    return picked.head(count)
+
+
+def _bucket_fallback_pool(pool: pd.DataFrame, bucket: str, user_rating: float) -> pd.DataFrame:
+    if pool.empty:
+        return pool
+    if bucket == "confidence":
+        constrained = pool[(pool["solve_probability"] >= 0.62) & (pool["rating"] <= user_rating + 150)].copy()
+        return constrained if not constrained.empty else pool[pool["solve_probability"] >= 0.62].copy()
+    if bucket == "growth":
+        constrained = pool[
+            (pool["rating"].between(user_rating - 200, user_rating + 550))
+            & (pool["solve_probability"].between(0.42, 0.86))
+        ].copy()
+        return constrained if not constrained.empty else pool[pool["rating"].between(user_rating - 250, user_rating + 650)].copy()
+    if bucket == "stretch":
+        constrained = pool[
+            (pool["rating"] >= user_rating + 150)
+            & (pool["solve_probability"].between(0.18, 0.62))
+        ].copy()
+        return constrained
+    return pool
 
 
 def _infer_recent_failures(tags: list[str], tag_stats: pd.DataFrame) -> float:
@@ -159,3 +225,69 @@ def _prefilter_candidates(
         - frame["prefilter_rating_distance"] * 0.00055
     )
     return frame.sort_values("prefilter_score", ascending=False).head(candidate_limit).reset_index(drop=True)
+
+
+def _target_tag_weights(weak_tags: pd.DataFrame) -> dict[str, float]:
+    if weak_tags.empty or "tag" not in weak_tags.columns:
+        return {}
+    frame = weak_tags.copy()
+    if "priority_score" not in frame.columns:
+        frame["priority_score"] = 50.0
+    sort_columns = ["priority_score"]
+    if "attempts" in frame.columns:
+        sort_columns.append("attempts")
+    frame = frame.sort_values(sort_columns, ascending=False).head(10)
+    weights: dict[str, float] = {}
+    max_priority = float(frame["priority_score"].max() or 1)
+    for row in frame.to_dict("records"):
+        tag = str(row.get("tag", "")).strip()
+        if not tag:
+            continue
+        level = str(row.get("level", ""))
+        level_boost = 1.25 if level in {"Weak", "Over-attempted but low accuracy"} else 0.85
+        priority = float(row.get("priority_score", 0) or 0)
+        weights[tag] = max(0.15, priority / max_priority) * level_boost
+    return weights
+
+
+def _weighted_tag_score(problem_tags: list[str], target_weights: dict[str, float]) -> float:
+    if not problem_tags or not target_weights:
+        return 0.0
+    problem_set = set(problem_tags or [])
+    matched = sum(weight for tag, weight in target_weights.items() if tag in problem_set)
+    total = sum(target_weights.values()) or 1.0
+    jaccard = tag_similarity_score(problem_tags, list(target_weights))
+    return float(min(1.0, matched / total * 0.75 + jaccard * 0.25))
+
+
+def _diversified_head(frame: pd.DataFrame, count: int) -> pd.DataFrame:
+    if frame.empty or len(frame) <= count:
+        return frame.head(count)
+
+    chosen = []
+    tag_counts: dict[str, int] = {}
+    bucket_counts: dict[int, int] = {}
+    for _, row in frame.iterrows():
+        tags = row.get("tags", []) or []
+        primary_tag = str(tags[0]) if tags else "untagged"
+        rating_bucket = int(float(row.get("rating", 0) or 0) // 200 * 200)
+        tag_limit = 3 if count >= 10 else 2
+        bucket_limit = 4 if count >= 10 else 2
+        if tag_counts.get(primary_tag, 0) >= tag_limit or bucket_counts.get(rating_bucket, 0) >= bucket_limit:
+            continue
+        chosen.append(row)
+        tag_counts[primary_tag] = tag_counts.get(primary_tag, 0) + 1
+        bucket_counts[rating_bucket] = bucket_counts.get(rating_bucket, 0) + 1
+        if len(chosen) >= count:
+            break
+
+    if len(chosen) < count:
+        chosen_ids = {str(row.get("problem_id")) for row in chosen}
+        for _, row in frame.iterrows():
+            if str(row.get("problem_id")) in chosen_ids:
+                continue
+            chosen.append(row)
+            if len(chosen) >= count:
+                break
+
+    return pd.DataFrame(chosen).reset_index(drop=True)

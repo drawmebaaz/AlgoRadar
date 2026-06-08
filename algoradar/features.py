@@ -14,10 +14,15 @@ SOLVE_FEATURE_COLUMNS = [
     "rating_gap",
     "tag_accuracy",
     "attempts_on_tag",
+    "tag_solved_count",
+    "tag_avg_rating_solved",
+    "tag_max_rating_solved",
     "recent_failures",
     "popularity_log",
     "tag_count",
     "recent_accuracy",
+    "solved_volume_log",
+    "rating_confidence",
 ]
 
 INDEX_RATING_BASELINE = {
@@ -324,8 +329,12 @@ def build_solve_examples(
         rating = float(first["rating"] if not pd.isna(first["rating"]) else user_rating)
         tag_values = [_tag_value(tag_lookup, tag, "accuracy") for tag in tags]
         attempt_values = [_tag_value(tag_lookup, tag, "attempts") for tag in tags]
+        solved_values = [_tag_value(tag_lookup, tag, "solved") for tag in tags]
+        avg_rating_values = [_tag_value(tag_lookup, tag, "avg_rating_solved") for tag in tags]
+        max_rating_values = [_tag_value(tag_lookup, tag, "max_rating_solved") for tag in tags]
         failure_values = [_tag_value(tag_lookup, tag, "recent_failures") for tag in tags]
         solved = int(group["is_accepted"].any())
+        rating_confidence = 1.0 if not pd.isna(first.get("official_rating", np.nan)) else 0.65
         rows.append(
             {
                 "problem_id": pid,
@@ -336,10 +345,15 @@ def build_solve_examples(
                 "rating_gap": rating - user_rating,
                 "tag_accuracy": float(np.mean(tag_values)) if tag_values else 0.0,
                 "attempts_on_tag": float(np.mean(attempt_values)) if attempt_values else 0.0,
+                "tag_solved_count": float(np.mean(solved_values)) if solved_values else 0.0,
+                "tag_avg_rating_solved": float(np.mean([value for value in avg_rating_values if value])) if any(avg_rating_values) else 0.0,
+                "tag_max_rating_solved": float(max(max_rating_values)) if max_rating_values else 0.0,
                 "recent_failures": float(np.mean(failure_values)) if failure_values else 0.0,
                 "popularity_log": math.log1p(float(popularity.get(pid, 0))),
                 "tag_count": len(tags),
                 "recent_accuracy": recent_accuracy,
+                "solved_volume_log": math.log1p(float(profile.get("problems_solved", 0) or 0)),
+                "rating_confidence": rating_confidence,
                 "solved": solved,
             }
         )
@@ -359,22 +373,33 @@ def make_problem_feature_row(
     user_rating = float(profile.get("current_rating", 1200))
     tag_values = [_tag_value(tag_lookup, tag, "accuracy") for tag in tags]
     attempt_values = [_tag_value(tag_lookup, tag, "attempts") for tag in tags]
+    solved_values = [_tag_value(tag_lookup, tag, "solved") for tag in tags]
+    avg_rating_values = [_tag_value(tag_lookup, tag, "avg_rating_solved") for tag in tags]
+    max_rating_values = [_tag_value(tag_lookup, tag, "max_rating_solved") for tag in tags]
     failure_values = [_tag_value(tag_lookup, tag, "recent_failures") for tag in tags]
     recent_failures = (
         float(recent_failures_override)
         if recent_failures_override is not None
         else float(np.mean(failure_values)) if failure_values else 0.0
     )
+    official_rating = problem.get("official_rating", np.nan)
+    rating_source = str(problem.get("rating_source", "") or "").lower()
+    rating_confidence = 1.0 if rating_source == "official" or not pd.isna(official_rating) else 0.65
     return {
         "problem_rating": rating,
         "user_rating": user_rating,
         "rating_gap": rating - user_rating,
         "tag_accuracy": float(np.mean(tag_values)) if tag_values else 0.0,
         "attempts_on_tag": float(np.mean(attempt_values)) if attempt_values else 0.0,
+        "tag_solved_count": float(np.mean(solved_values)) if solved_values else 0.0,
+        "tag_avg_rating_solved": float(np.mean([value for value in avg_rating_values if value])) if any(avg_rating_values) else 0.0,
+        "tag_max_rating_solved": float(max(max_rating_values)) if max_rating_values else 0.0,
         "recent_failures": recent_failures,
         "popularity_log": math.log1p(float(problem.get("solved_count", 0))),
         "tag_count": float(len(tags)),
         "recent_accuracy": float(profile.get("recent_accuracy", 0)),
+        "solved_volume_log": math.log1p(float(profile.get("problems_solved", 0) or 0)),
+        "rating_confidence": rating_confidence,
     }
 
 

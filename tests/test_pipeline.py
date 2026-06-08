@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from algoradar.features import problemset_to_frame, submissions_to_frame, tag_feature_frame
+from algoradar.features import make_problem_feature_row, problemset_to_frame, submissions_to_frame, tag_feature_frame
 from algoradar.models import train_contest_score_predictor
 from algoradar.pipeline import run_analysis
 from algoradar.recommender import score_custom_problem
@@ -93,4 +93,23 @@ def test_contest_predictor_handles_imbalanced_training_bands() -> None:
     report = train_contest_score_predictor(profile)
 
     assert report["predicted_band"]
-    assert report["selected_model_name"] in {"random_forest", "logistic_regression", "constant_baseline"}
+    assert report["selected_model_name"] in {"contest_scorecard", "random_forest", "logistic_regression", "constant_baseline"}
+
+
+def test_problem_feature_row_includes_strength_signals() -> None:
+    profile = {"current_rating": 1200, "recent_accuracy": 55, "problems_solved": 80}
+    tag_stats = tag_feature_frame(
+        submissions_to_frame(make_sample_bundle("feature_unit")["submissions"])
+    )
+    problem = problemset_to_frame(
+        [{"contestId": 1, "index": "C", "name": "Tagged", "rating": 1400, "tags": ["dp"]}],
+        [{"contestId": 1, "index": "C", "solvedCount": 2500}],
+    ).iloc[0]
+
+    features = make_problem_feature_row(problem, profile, tag_stats)
+
+    assert features["tag_solved_count"] >= 0
+    assert features["tag_avg_rating_solved"] >= 0
+    assert features["tag_max_rating_solved"] >= 0
+    assert features["solved_volume_log"] > 0
+    assert features["rating_confidence"] == 1.0

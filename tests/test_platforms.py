@@ -154,6 +154,35 @@ def test_codechef_recommendations_use_rating_bands(monkeypatch) -> None:
 
     assert set(recs["bucket"]) == {"confidence", "growth", "stretch"}
     assert recs["url"].str.contains("codechef.com/problems").all()
+    assert recs["solve_probability_pct"].between(20, 84).all()
+
+
+def test_external_probability_helpers_are_user_sensitive() -> None:
+    easy_row = pd.Series(
+        {
+            "difficulty_rank": 1,
+            "tag_fit": 1.0,
+            "acceptance_component": 0.72,
+            "level_fit": 1.0,
+        }
+    )
+    hard_row = pd.Series(
+        {
+            "difficulty_rank": 3,
+            "tag_fit": 0.0,
+            "acceptance_component": 0.24,
+            "level_fit": 0.0,
+        }
+    )
+    codechef_easy = pd.Series({"difficulty": 1300, "acceptance_rate": 65, "solved_count": 3000})
+    codechef_hard = pd.Series({"difficulty": 1900, "acceptance_rate": 28, "solved_count": 120})
+
+    assert platforms._leetcode_solve_probability(easy_row, "confidence", 220, 2.0) > platforms._leetcode_solve_probability(
+        hard_row, "stretch", 220, 2.0
+    )
+    assert platforms._codechef_solve_probability(codechef_easy, 1500, {"total_solved": 180}, "confidence") > platforms._codechef_solve_probability(
+        codechef_hard, 1500, {"total_solved": 180}, "stretch"
+    )
 
 
 def test_combined_overview_accepts_codeforces_and_external() -> None:

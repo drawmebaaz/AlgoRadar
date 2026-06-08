@@ -972,13 +972,13 @@ def _leetcode_recommendations(
     )
 
     buckets = [
-        ("confidence", ["Easy"] if total_solved < 120 else ["Medium"], 5, 68),
-        ("growth", ["Medium"] if total_solved < 350 else ["Medium", "Hard"], 10, 52),
-        ("stretch", ["Hard"] if total_solved >= 80 else ["Medium"], 5, 35),
+        ("confidence", ["Easy"] if total_solved < 120 else ["Medium"], 5),
+        ("growth", ["Medium"] if total_solved < 350 else ["Medium", "Hard"], 10),
+        ("stretch", ["Hard"] if total_solved >= 80 else ["Medium"], 5),
     ]
     rows: list[pd.DataFrame] = []
     used: set[str] = set()
-    for bucket, difficulties, count, probability in buckets:
+    for bucket, difficulties, count in buckets:
         subset = frame[frame["difficulty"].isin(difficulties)].copy()
         subset = subset[~subset["slug"].isin(used)]
         if subset.empty:
@@ -987,7 +987,10 @@ def _leetcode_recommendations(
         used.update(subset["slug"].tolist())
         subset["platform"] = "LeetCode"
         subset["bucket"] = bucket
-        subset["solve_probability_pct"] = probability
+        subset["solve_probability_pct"] = subset.apply(
+            lambda row: _leetcode_solve_probability(row, bucket, total_solved, target_rank),
+            axis=1,
+        )
         subset["reason"] = subset["tags"].apply(lambda tags: _tag_reason(tags, "LeetCode weak-tag coverage"))
         rows.append(subset)
 
@@ -1144,13 +1147,13 @@ def _safe_codechef_recommendations(profile: dict[str, Any], force_refresh: bool)
 def _codechef_recommendations(profile: dict[str, Any], force_refresh: bool = False) -> pd.DataFrame:
     rating = int(profile.get("current_rating", 0) or profile.get("max_rating", 0) or 1200)
     bands = [
-        ("confidence", max(0, rating - 350), max(1, rating - 50), 5, 72),
-        ("growth", max(0, rating - 50), min(5001, rating + 250), 10, 58),
-        ("stretch", min(5000, rating + 250), min(5001, rating + 550), 5, 38),
+        ("confidence", max(0, rating - 350), max(1, rating - 50), 5),
+        ("growth", max(0, rating - 50), min(5001, rating + 250), 10),
+        ("stretch", min(5000, rating + 250), min(5001, rating + 550), 5),
     ]
     rows: list[pd.DataFrame] = []
     used: set[str] = set()
-    for bucket, low, high, count, probability in bands:
+    for bucket, low, high, count in bands:
         frame = _fetch_codechef_problems(low, high, force_refresh=force_refresh)
         if frame.empty:
             continue
@@ -1158,12 +1161,16 @@ def _codechef_recommendations(profile: dict[str, Any], force_refresh: bool = Fal
         if frame.empty:
             continue
         frame["bucket"] = bucket
-        frame["solve_probability_pct"] = probability
-        frame["rating_gap"] = (frame["difficulty"] - rating).abs()
+        frame["native_rating_gap"] = frame["difficulty"] - rating
+        frame["solve_probability_pct"] = frame.apply(lambda row: _codechef_solve_probability(row, rating, profile, bucket), axis=1)
+        frame["target_gap"] = {"confidence": -180, "growth": 110, "stretch": 360}[bucket]
+        frame["gap_to_target"] = (frame["native_rating_gap"] - frame["target_gap"]).abs()
+        popularity = frame["solved_count"].fillna(0).apply(lambda value: math.log1p(value) / math.log1p(7000))
         frame["rank_score"] = (
-            (1 / (1 + frame["rating_gap"])) * 80
-            + frame["acceptance_rate"].fillna(0) / 100 * 0.18
-            + frame["solved_count"].fillna(0).apply(lambda value: math.log1p(value)) * 0.02
+            (1 / (1 + frame["gap_to_target"] / 250)) * 0.52
+            + frame["acceptance_rate"].fillna(0) / 100 * 0.22
+            + popularity * 0.18
+            + frame["solve_probability_pct"] / 100 * 0.08
         )
         frame["reason"] = frame["difficulty"].apply(lambda value: f"CodeChef rating band around {int(value)}")
         chosen = frame.sort_values(["rank_score", "acceptance_rate"], ascending=[False, False]).head(count)
@@ -1375,6 +1382,56 @@ def _leetcode_target_rank(total_solved: int) -> float:
     if total_solved < 350:
         return 2.0
     return 2.45
+
+
+def _leetcode_solve_probability(row: pd.Series, bucket: str, total_solved: int, target_rank: float) -> float:
+    difficulty_rank = float(row.get("difficulty_rank", 2) or 2)
+    tag_fit = float(row.get("tag_fit", 0) or 0)
+    acceptance = float(row.get("acceptance_component", 0) or 0)
+    level_fit = max(0.0, float(row.get("level_fit", 0) or 0))
+    experience = min(1.0, math.log1p(max(total_solved, 0)) / math.log1p(900))
+    above_target = max(0.0, difficulty_rank - target_rank)
+    bucket_bias = {"confidence": 0.58, "growth": 0.04, "stretch": -0.68}.get(bucket, 0.0)
+    logit = (
+        bucket_bias
+        + tag_fit * 0.58
+        + level_fit * 0.38
+        + acceptance * 0.3
+        + experience * 0.24
+        - above_target * 0.46
+    )
+    probability = 1 / (1 + math.exp(-logit))
+    low, high = {
+        "confidence": (58, 84),
+        "growth": (38, 74),
+        "stretch": (22, 58),
+    }.get(bucket, (20, 85))
+    return round(max(low, min(high, probability * 100)), 1)
+
+
+def _codechef_solve_probability(row: pd.Series, rating: int, profile: dict[str, Any], bucket: str) -> float:
+    difficulty = float(row.get("difficulty", rating) or rating)
+    gap = difficulty - float(rating)
+    acceptance = float(row.get("acceptance_rate", 0) or 0) / 100
+    solved_count = float(row.get("solved_count", 0) or 0)
+    total_solved = float(profile.get("total_solved", 0) or 0)
+    experience = min(1.0, math.log1p(max(total_solved, 0)) / math.log1p(700))
+    popularity = min(1.0, math.log1p(max(solved_count, 0)) / math.log1p(7000))
+    bucket_bias = {"confidence": 0.54, "growth": 0.02, "stretch": -0.72}.get(bucket, 0.0)
+    logit = (
+        bucket_bias
+        - gap / 310
+        + acceptance * 0.34
+        + popularity * 0.16
+        + experience * 0.22
+    )
+    probability = 1 / (1 + math.exp(-logit))
+    low, high = {
+        "confidence": (56, 84),
+        "growth": (38, 74),
+        "stretch": (20, 58),
+    }.get(bucket, (20, 85))
+    return round(max(low, min(high, probability * 100)), 1)
 
 
 def _tag_overlap_score(tags: list[str], weak_tags: list[str]) -> float:
