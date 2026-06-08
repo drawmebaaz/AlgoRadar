@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -7,6 +8,8 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+
+MINILM_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
 
 @dataclass
@@ -33,12 +36,15 @@ def build_semantic_index(problems: pd.DataFrame, prefer_transformer: bool = True
 
     if prefer_transformer:
         try:
+            os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+            os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
             from sentence_transformers import SentenceTransformer
 
-            model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+            allow_download = os.environ.get("ALGORADAR_ALLOW_MINILM_DOWNLOAD", "").strip() == "1"
+            model = SentenceTransformer(MINILM_MODEL_NAME, local_files_only=not allow_download)
             embeddings = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
             return SemanticIndex(
-                method="sentence-transformers/all-MiniLM-L6-v2",
+                method=MINILM_MODEL_NAME,
                 texts=texts,
                 problem_ids=problem_ids,
                 embeddings=embeddings,

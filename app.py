@@ -88,7 +88,7 @@ def main() -> None:
         prefer_transformer = st.toggle(
             "Use MiniLM embeddings",
             value=False,
-            help="If sentence-transformers is installed, this uses all-MiniLM-L6-v2. Otherwise the app uses TF-IDF fallback.",
+            help="Uses all-MiniLM-L6-v2 for similar-problem retrieval. Run scripts/verify_minilm.py once after installing optional dependencies so the model is downloaded before using the toggle.",
         )
 
         if "screen" not in st.session_state:

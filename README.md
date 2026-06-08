@@ -287,11 +287,29 @@ python3 -m pip install -r requirements-embeddings.txt
 
 Then run:
 
+#### Windows
+
+```powershell
+python scripts\verify_minilm.py
+```
+
+#### macOS / Linux
+
+```bash
+python3 scripts/verify_minilm.py
+```
+
+This downloads `sentence-transformers/all-MiniLM-L6-v2` into the local Hugging Face cache and verifies that embeddings are being generated correctly. The first run can take time depending on your internet speed; after that, the Streamlit toggle should be much faster.
+
+Then start the app:
+
 ```bash
 streamlit run app.py
 ```
 
-Turn on **Use MiniLM embeddings** in the sidebar.
+Turn on **Use MiniLM embeddings** in the sidebar when using the Recommendations section. If the optional stack is not installed or the model cannot load, AlgoRadar falls back to TF-IDF retrieval.
+
+By default, the Streamlit app only uses a locally cached MiniLM model so normal analysis does not hang on a first-time model download. To allow downloading from inside the app, set `ALGORADAR_ALLOW_MINILM_DOWNLOAD=1` before running Streamlit.
 
 ## Run Tests
 
@@ -428,6 +446,7 @@ AlgoRadar/
   scripts/
     run_analysis.py              CLI pipeline runner
     generate_social_assets.py    Rebuild README/social preview images
+    verify_minilm.py             Download and test MiniLM embeddings
   social_assets/
     algoradar-00-social-card.png
     algoradar-01-multi-platform-profile.png
