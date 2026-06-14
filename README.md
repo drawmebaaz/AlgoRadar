@@ -1,12 +1,14 @@
 # AlgoRadar
 
-![AlgoRadar social preview](social_assets/algoradar-00-social-card.png)
+![AlgoRadar combined analysis](social_assets/algoradar-screenshot-combined-analysis.png)
 
 **AlgoRadar | AI Competitive Programming Weakness Analyzer and Problem Recommender**
 
 AlgoRadar is a machine-learning powered competitive programming intelligence dashboard for Codeforces, CodeChef, and LeetCode. A user enters any combination of the three handles, and the app returns platform-wise analytics, weakness signals, recommendations, and solve-probability estimates from the handles provided.
 
 The goal is not just to show charts. AlgoRadar includes an end-to-end ML-style analytics pipeline where the platform data supports it: API ingestion, caching, data cleaning, feature engineering, baseline rules, model metrics, calibrated scorecards, problem ranking, and semantic similarity search. Codeforces has the deepest signal because its official API exposes verdict-level submissions. LeetCode and CodeChef are normalized into the same product experience using their public profile, contest, topic, and practice-problem data.
+
+Read the development write-up here: [Building AlgoRadar: Problems Faced and How We Solved Them](DEVELOPMENT_BLOG.md).
 
 ## Features
 
@@ -43,13 +45,21 @@ The goal is not just to show charts. AlgoRadar includes an end-to-end ML-style a
 
 ## Visual Preview
 
-| Multi-platform profile | Weakness map |
-| --- | --- |
-| ![Multi-platform profile](social_assets/algoradar-01-multi-platform-profile.png) | ![Weakness map](social_assets/algoradar-02-weakness-map.png) |
+### Combined Analysis
 
-| Recommendations | Solve probability |
-| --- | --- |
-| ![Platform-separated recommendations](social_assets/algoradar-03-recommendations.png) | ![Calibrated solve probability](social_assets/algoradar-04-solve-probability.png) |
+![Combined analysis dashboard](social_assets/algoradar-screenshot-combined-analysis.png)
+
+### Recommendations Overview
+
+![Recommendations overview](social_assets/algoradar-screenshot-recommendations-overview.png)
+
+### Recommendation Table
+
+![Recommendation table](social_assets/algoradar-screenshot-recommendations-table.png)
+
+### Solve Probability
+
+![Solve probability screen](social_assets/algoradar-screenshot-solve-probability.png)
 
 ## Tech Stack
 
@@ -341,21 +351,14 @@ python -m pytest -q
 python3 -m pytest -q
 ```
 
-## Regenerate Social Assets
+## Update README Screenshots
 
-The README preview images are generated locally so the visuals stay consistent with the product language.
+The README preview uses real app screenshots stored in `social_assets/`. To refresh the gallery, replace these files with new screenshots using the same filenames:
 
-#### Windows
-
-```powershell
-python scripts\generate_social_assets.py
-```
-
-#### macOS / Linux
-
-```bash
-python3 scripts/generate_social_assets.py
-```
+- `algoradar-screenshot-combined-analysis.png`
+- `algoradar-screenshot-recommendations-overview.png`
+- `algoradar-screenshot-recommendations-table.png`
+- `algoradar-screenshot-solve-probability.png`
 
 ## Troubleshooting
 
@@ -427,6 +430,7 @@ You can also expose your local Streamlit app with a tunnel such as Cloudflare Tu
 ```text
 AlgoRadar/
   app.py                         Streamlit dashboard
+  DEVELOPMENT_BLOG.md            Development problems and fixes write-up
   requirements.txt               App dependencies
   requirements-dev.txt           Test dependencies
   requirements-embeddings.txt    Optional MiniLM embedding dependencies
@@ -445,14 +449,12 @@ AlgoRadar/
     weakness.py                  Rule baseline and weakness scoring
   scripts/
     run_analysis.py              CLI pipeline runner
-    generate_social_assets.py    Rebuild README/social preview images
     verify_minilm.py             Download and test MiniLM embeddings
   social_assets/
-    algoradar-00-social-card.png
-    algoradar-01-multi-platform-profile.png
-    algoradar-02-weakness-map.png
-    algoradar-03-recommendations.png
-    algoradar-04-solve-probability.png
+    algoradar-screenshot-combined-analysis.png
+    algoradar-screenshot-recommendations-overview.png
+    algoradar-screenshot-recommendations-table.png
+    algoradar-screenshot-solve-probability.png
   tests/
     test_pipeline.py             Smoke tests for the ML pipeline
     test_platforms.py            Non-network tests for platform normalization
@@ -482,4 +484,4 @@ AlgoRadar classifies recommended problems into:
 - The app analyzes the latest 2,500 Codeforces submissions for a practical balance of speed and signal.
 - The recommender prefilters the problemset before model scoring so the app stays responsive.
 - The weakness classifier intentionally starts with transparent rules and model-style metrics. This mirrors real ML workflows where a baseline matters before collecting larger labeled outcome data.
-- Social preview images can be regenerated with `python scripts/generate_social_assets.py`.
+- README preview screenshots live in `social_assets/` and can be replaced with newer app screenshots when the UI changes.
