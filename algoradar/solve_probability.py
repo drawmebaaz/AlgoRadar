@@ -81,7 +81,8 @@ def score_saved_profile_problem(
     profile_strength = _combined_strength(codeforces_result, external_results)
     tag_strength = _tag_strength(tags, codeforces_result, external_results)
 
-    anchor_rating = float(profile_strength["anchor_rating"])
+    combined_anchor = float(profile_strength["anchor_rating"])
+    anchor_rating = _platform_adjusted_anchor(platform, profile_strength)
     total_solved = float(profile_strength["total_solved"])
     tag_solved = float(tag_strength["tag_solved"])
     tag_rating_ceiling = float(tag_strength["tag_rating_ceiling"])
@@ -90,101 +91,90 @@ def score_saved_profile_problem(
     rating_gap = target_cf - anchor_rating
     ceiling_gap = tag_rating_ceiling - target_cf
     avg_gap = tag_avg_rating - target_cf
-    volume_score = _bounded_log(tag_solved, 90)
-    overall_volume_score = _bounded_log(total_solved, 2200)
-    ceiling_score = _sigmoid((ceiling_gap + 80) / 250)
-    avg_rating_score = _sigmoid((avg_gap + 80) / 330)
+    tag_volume_score = _bounded_log(tag_solved, 120)
+    overall_volume_score = _bounded_log(total_solved, 1600)
+    ceiling_score = _sigmoid((ceiling_gap - 60) / 170)
+    avg_rating_score = _sigmoid((avg_gap - 80) / 220)
     popularity_score = _bounded_log(popularity, 70000)
     platform_fit = _platform_fit(platform, profile_strength)
     calibration_weight = float(calibration["training_weight"])
-    tag_penalty = min(len(tags), 5) * 0.025
-    cold_tag_penalty = 0.22 if tags and tag_solved < 3 else 0.0
+    cold_tag_adjustment = -0.22 if tags and tag_solved < 3 else 0.0
 
+    # A problem around the user's current level is usually a growth attempt,
+    # not a guaranteed solve. Keep rating gap as the main driver and let
+    # tag/popularity/platform signals nudge the result rather than dominate it.
     logit = (
-        -0.72
+        -0.38
         - rating_gap / 285
-        + volume_score * 0.56
-        + ceiling_score * 0.62
-        + avg_rating_score * 0.24
-        + overall_volume_score * 0.12
-        + popularity_score * 0.08
-        + platform_fit * 0.06
-        + calibration_weight * 0.05
-        - tag_penalty
-        - cold_tag_penalty
+        + 0.34 * (tag_volume_score - 0.45)
+        + 0.34 * (ceiling_score - 0.5)
+        + 0.18 * (avg_rating_score - 0.5)
+        + 0.10 * (overall_volume_score - 0.45)
+        + 0.05 * (platform_fit - 0.35)
+        + 0.04 * (popularity_score - 0.5)
+        + 0.04 * (calibration_weight - 0.6)
+        + cold_tag_adjustment
     )
     raw_probability = _sigmoid(logit)
-
-    # Solving a problem near the user's calibrated anchor should usually be a
-    # growth attempt, not a near-guaranteed solve. The cap keeps the curve
-    # monotonic and prevents solved-volume alone from producing 95-98% claims.
-    confidence_cap = 0.57 + 0.34 * _sigmoid((-rating_gap - 80) / 260)
-    confidence_cap += 0.06 * _sigmoid((ceiling_gap - 150) / 280)
-    if tag_solved < 3 and tags:
-        confidence_cap = min(confidence_cap, 0.66)
-    probability = float(max(0.02, min(raw_probability, confidence_cap, 0.92)))
+    confidence_cap = _practical_probability_cap(rating_gap, ceiling_gap, tag_solved, bool(tags))
+    probability = float(max(0.02, min(raw_probability, confidence_cap)))
 
     factors = pd.DataFrame(
         [
             {
-                "factor": "Target CF-equivalent difficulty",
-                "value": round(target_cf, 0),
-                "impact": calibration["source"],
+                "Signal": "Problem level",
+                "Value": round(target_cf, 0),
+                "Meaning": "shared difficulty scale",
             },
             {
-                "factor": "User CF-equivalent anchor",
-                "value": round(anchor_rating, 0),
-                "impact": "weighted from provided handles",
+                "Signal": "Your estimated level",
+                "Value": round(anchor_rating, 0),
+                "Meaning": "mostly this platform; other handles help a little",
             },
             {
-                "factor": "Target minus anchor",
-                "value": round(rating_gap, 0),
-                "impact": round(-rating_gap / 330, 3),
+                "Signal": "Problem above your level",
+                "Value": round(rating_gap, 0),
+                "Meaning": "positive means harder than your current level",
             },
             {
-                "factor": "Solved on selected tags",
-                "value": round(tag_solved, 1),
-                "impact": round(volume_score, 3),
+                "Signal": "Solved on these tags",
+                "Value": round(tag_solved, 1),
+                "Meaning": "more real practice on these topics helps",
             },
             {
-                "factor": "Hardest solved on selected tags",
-                "value": round(tag_rating_ceiling, 0),
-                "impact": round(ceiling_score, 3),
+                "Signal": "Hardest solved on these tags",
+                "Value": round(tag_rating_ceiling, 0),
+                "Meaning": "strong evidence only if close to the problem level",
             },
             {
-                "factor": "Hardest solved minus target",
-                "value": round(ceiling_gap, 0),
-                "impact": "stronger when positive",
+                "Signal": "Hardest tag solve vs problem",
+                "Value": round(ceiling_gap, 0),
+                "Meaning": "positive means you have solved harder similar work",
             },
             {
-                "factor": "Average solved difficulty on tags",
-                "value": round(tag_avg_rating, 0),
-                "impact": round(avg_rating_score, 3),
+                "Signal": "Usual level on these tags",
+                "Value": round(tag_avg_rating, 0),
+                "Meaning": "keeps one lucky hard solve from overrating you",
             },
             {
-                "factor": "Total solved across provided handles",
-                "value": round(total_solved, 1),
-                "impact": round(overall_volume_score, 3),
+                "Signal": "Total solved",
+                "Value": round(total_solved, 1),
+                "Meaning": "small confidence boost, not the main factor",
             },
             {
-                "factor": "Problem popularity",
-                "value": int(popularity or 0),
-                "impact": round(popularity_score, 3),
+                "Signal": "Problem popularity",
+                "Value": int(popularity or 0),
+                "Meaning": "popular problems are usually easier to learn from",
             },
             {
-                "factor": "Problem tags used",
-                "value": ", ".join(tags) if tags else "None selected",
-                "impact": "automatic when available",
-            },
-            {
-                "factor": "Calibration reliability",
-                "value": calibration["confidence"],
-                "impact": round(calibration_weight, 3),
+                "Signal": "Tags used",
+                "Value": ", ".join(tags) if tags else "None selected",
+                "Meaning": "pulled automatically when available",
             },
         ]
     )
-    factors["value"] = factors["value"].astype(str)
-    factors["impact"] = factors["impact"].astype(str)
+    factors["Value"] = factors["Value"].astype(str)
+    factors["Meaning"] = factors["Meaning"].astype(str)
 
     return {
         "platform": platform,
@@ -203,6 +193,7 @@ def score_saved_profile_problem(
         "bucket": _bucket_probability(probability),
         "anchor_rating": round(anchor_rating, 0),
         "anchor_cf_equivalent": round(anchor_rating, 0),
+        "combined_anchor_cf_equivalent": round(combined_anchor, 0),
         "total_solved": round(total_solved, 1),
         "tag_solved": round(tag_solved, 1),
         "tag_rating_ceiling": round(tag_rating_ceiling, 0),
@@ -284,7 +275,7 @@ def native_to_cf_equivalent(
         platform=platform,
         native_target=str(int(round(target))),
         cf_equivalent=target,
-        source="Fallback CF-equivalent rating",
+        source="Fallback shared difficulty rating",
         row=row,
     )
 
@@ -391,6 +382,19 @@ def _combined_strength(codeforces_result: Any | None, external_results: dict[str
     }
 
 
+def _platform_adjusted_anchor(platform: str, profile_strength: dict[str, Any]) -> float:
+    combined_anchor = float(profile_strength.get("anchor_rating", 1200.0) or 1200.0)
+    platform_anchor = profile_strength.get("platform_anchor", {}) or {}
+    platform_key = _platform_name(platform)
+    direct_anchor = platform_anchor.get(platform_key)
+    if direct_anchor is None:
+        return combined_anchor
+
+    direct_anchor = float(direct_anchor)
+    blended = direct_anchor * 0.72 + combined_anchor * 0.28
+    return _clip_rating(blended, direct_anchor - 180, direct_anchor + 220)
+
+
 def _tag_strength(tags: list[str], codeforces_result: Any | None, external_results: dict[str, Any]) -> dict[str, float]:
     normalized = _expanded_tags(tags)
     solved_values: list[float] = []
@@ -430,11 +434,12 @@ def _tag_strength(tags: list[str], codeforces_result: Any | None, external_resul
     tag_solved = sum(solved_values)
     fallback = _combined_strength(codeforces_result, external_results)
     anchor = float(fallback["anchor_rating"])
-    if tag_solved == 0:
+    if tag_solved == 0 and not normalized:
         tag_solved = fallback["total_solved"] * 0.025
 
-    tag_avg_rating = sum(avg_rating_values) / len(avg_rating_values) if avg_rating_values else max(700.0, anchor - 180)
-    tag_rating_ceiling = max(max_rating_values) if max_rating_values else max(700.0, anchor - 100)
+    missing_tag_penalty = 260 if normalized else 160
+    tag_avg_rating = sum(avg_rating_values) / len(avg_rating_values) if avg_rating_values else max(700.0, anchor - missing_tag_penalty)
+    tag_rating_ceiling = max(max_rating_values) if max_rating_values else max(700.0, anchor - missing_tag_penalty + 60)
 
     return {
         "tag_solved": tag_solved,
@@ -543,8 +548,22 @@ def _tag_key(tag: Any) -> str:
 
 def _platform_fit(platform: str, profile_strength: dict[str, Any]) -> float:
     solved = profile_strength.get("platform_solved", {})
-    value = float(solved.get(platform, 0) or solved.get(platform.title(), 0) or 0)
+    value = float(solved.get(_platform_name(platform), 0) or solved.get(platform, 0) or solved.get(platform.title(), 0) or 0)
     return _bounded_log(value, 700)
+
+
+def _practical_probability_cap(rating_gap: float, ceiling_gap: float, tag_solved: float, has_tags: bool) -> float:
+    cap = 0.48 + 0.38 * _sigmoid((-rating_gap - 120) / 260)
+    cap += 0.05 * _sigmoid((ceiling_gap - 260) / 220)
+    if rating_gap >= 0:
+        cap = min(cap, 0.62)
+    if rating_gap >= 200:
+        cap = min(cap, 0.48)
+    if rating_gap >= 400:
+        cap = min(cap, 0.34)
+    if has_tags and tag_solved < 3:
+        cap = min(cap, 0.50 if rating_gap <= 0 else 0.42)
+    return max(0.10, min(cap, 0.90))
 
 
 def _bounded_log(value: float, scale: float) -> float:
@@ -561,6 +580,11 @@ def _clip_rating(value: float, low: float, high: float) -> float:
 
 def _platform_key(platform: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(platform or "").lower())
+
+
+def _platform_name(platform: str) -> str:
+    key = _platform_key(platform)
+    return {"codeforces": "Codeforces", "codechef": "CodeChef", "leetcode": "LeetCode"}.get(key, str(platform or "").title())
 
 
 def _clean_leetcode_difficulty(difficulty: str) -> str:

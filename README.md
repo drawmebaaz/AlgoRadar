@@ -2,11 +2,11 @@
 
 ![AlgoRadar combined analysis](social_assets/algoradar-screenshot-combined-analysis.png)
 
-**AlgoRadar | AI Competitive Programming Weakness Analyzer and Problem Recommender**
+**AlgoRadar | Competitive Programming Analytics and Problem Recommender**
 
-AlgoRadar is a machine-learning powered competitive programming intelligence dashboard for Codeforces, CodeChef, and LeetCode. A user enters any combination of the three handles, and the app returns platform-wise analytics, weakness signals, recommendations, and solve-probability estimates from the handles provided.
+AlgoRadar is a competitive programming analytics and recommendation system for Codeforces, CodeChef, and LeetCode. A user enters any combination of the three handles, and the app returns platform-wise analytics, focus areas, practice recommendations, and practical solve estimates from the handles provided.
 
-The goal is not just to show charts. AlgoRadar includes an end-to-end ML-style analytics pipeline where the platform data supports it: API ingestion, caching, data cleaning, feature engineering, baseline rules, model metrics, calibrated scorecards, problem ranking, and semantic similarity search. Codeforces has the deepest signal because its official API exposes verdict-level submissions. LeetCode and CodeChef are normalized into the same product experience using their public profile, contest, topic, and practice-problem data.
+The goal is not just to show charts. AlgoRadar builds a full data pipeline: API ingestion, caching, data cleaning, feature engineering, transparent scoring rules, calibrated solve estimates, problem ranking, and similar-problem search. Codeforces has the deepest signal because its official API exposes verdict-level submissions. LeetCode and CodeChef are normalized into the same product experience using their public profile, contest, topic, and practice-problem data.
 
 Read the development write-up here: [Building AlgoRadar: Problems Faced and How We Solved Them](DEVELOPMENT_BLOG.md).
 
@@ -15,24 +15,24 @@ Read the development write-up here: [Building AlgoRadar: Problems Faced and How 
 - Optional Codeforces, CodeChef, and LeetCode handle inputs
 - Live Codeforces handle analysis
 - LeetCode profile, difficulty, topic, contest, and recommendation analysis
-- CodeChef profile, rating trend, weakness signals, and rating-band recommendations
+- CodeChef profile, rating trend, focus areas, and rating-band recommendations
 - Combined cross-platform summary when at least two handles are provided
-- Combined weakness/focus map
+- Combined focus map
 - Platform-separated practice queues
-- Rating-wise accuracy
-- Tag-wise accuracy
+- Success rate by difficulty
+- Tag-wise success and solved-depth analysis
 - Most failed tags
 - WA/TLE/runtime/compile verdict distribution
 - Solved problem difficulty distribution
 - Contest performance trend
-- Weakness classifier for every tag
-- Rule-based weakness baseline with model-style metrics
+- Focus table for every tag
+- Transparent rule-based tag scoring
 - Next-contest performance band prediction
-- Calibrated, monotonic problem solve-probability model
+- Practical solve-estimate model
 - Confidence/growth/stretch recommendation queues
 - Similar-but-harder problem retrieval
 - Progress tracking
-- Premium dark Streamlit UI
+- Clean Streamlit dashboard
 
 ## Screens
 
@@ -41,7 +41,7 @@ Read the development write-up here: [Building AlgoRadar: Problems Faced and How 
 3. CodeChef
 4. LeetCode
 5. Recommendations
-6. Solve probability
+6. Solve estimate
 
 ## Visual Preview
 
@@ -57,9 +57,9 @@ Read the development write-up here: [Building AlgoRadar: Problems Faced and How 
 
 ![Recommendation table](social_assets/algoradar-screenshot-recommendations-table.png)
 
-### Solve Probability
+### Solve Estimate
 
-![Solve probability screen](social_assets/algoradar-screenshot-solve-probability.png)
+![Solve estimate screen](social_assets/algoradar-screenshot-solve-probability.png)
 
 ## Tech Stack
 
@@ -71,40 +71,38 @@ Read the development write-up here: [Building AlgoRadar: Problems Faced and How 
 - Codeforces API
 - LeetCode GraphQL public profile data
 - CodeChef public profile and practice-problem data
-- TF-IDF vector search
-- Optional Sentence Transformers embeddings
+- Fast similar-problem search
+- Optional local MiniLM matching for better similar-problem results
 
 ## Recommendation and Probability Logic
 
 AlgoRadar does not recommend problems by rating alone. Every recommendation is scored from a user-specific feature row built from the handle data available for that platform.
 
-The solve-probability score uses 14 features, including:
+The solve estimate uses practical signals such as:
 
-- problem rating or calibrated difficulty
-- user rating
+- problem rating or estimated difficulty
+- estimated user level
 - rating gap
-- tag accuracy
 - attempts on related tags
 - solved count on related tags
 - average solved difficulty on related tags
 - hardest solved difficulty on related tags
 - total solved volume
-- recent accuracy
 - inferred recent failures
 - problem popularity
 - tag count
-- rating-source confidence
+- confidence in the problem difficulty source
 
-Accuracy is intentionally downweighted. Public accepted submissions can be inflated by editorials or AI help, so the model gives more importance to solved volume, tag depth, hardest solved difficulty, and the gap between the target problem and the user's demonstrated ceiling.
+Success rate is intentionally not the main signal. Public accepted submissions can be inflated by editorials or AI help, so AlgoRadar gives more importance to solved volume, tag depth, hardest solved difficulty, and the gap between the target problem and the user's demonstrated level.
 
 Recommendations are then ranked using:
 
-- solve-probability bucket fit
-- weak-tag similarity
+- solve-estimate bucket fit
+- focus-tag similarity
 - hardest-solved ceiling gap
 - available evidence strength
 - problem popularity
-- rating confidence
+- difficulty confidence
 - diversity across tags and rating bands
 
 The result is split into platform-specific queues:
@@ -123,14 +121,14 @@ AlgoRadar runs this pipeline:
 2. Fetch optional LeetCode and CodeChef profiles only when their handles are added and their screens need the data.
 3. Cache API/profile/problem-catalog responses locally in `data/cache/` so repeated runs are faster.
 4. Convert raw platform data into normalized pandas feature tables.
-5. Compute analytics such as rating accuracy, tag/topic coverage, verdict distribution, difficulty mix, and contest trends.
-6. Classify weakness using simple rules first.
-7. Build a rule-based weakness baseline and expose model-style metrics for explainability.
-8. Estimate the next-contest performance band from contest history, rating trend, solved volume, and recent accuracy.
-9. Build 14-feature solve-probability rows from rating gap, solved depth, tag evidence, recent failures, and popularity.
-10. Apply a calibrated monotonic scorecard so harder problems do not randomly receive higher probability.
+5. Compute analytics such as success by difficulty, tag/topic coverage, verdict distribution, difficulty mix, and contest trends.
+6. Score focus areas using transparent rules first.
+7. Estimate the next-contest performance band from contest history, rating trend, solved volume, and recent success.
+8. Build solve-estimate rows from rating gap, solved depth, tag evidence, recent failures, and popularity.
+9. Apply a monotonic scorecard so harder problems do not randomly receive higher estimates.
+10. Keep same-level problems realistic instead of treating them as guaranteed solves.
 11. Rank problems into confidence, growth, and stretch queues with duplicate and diversity controls.
-12. Build a similar-problem search layer using TF-IDF by default.
+12. Build a similar-problem search layer using a fast local matcher by default.
 
 The app uses live Codeforces data by default. If the API is unavailable, the backend has a reproducible sample-data fallback so the pipeline can still be tested.
 
@@ -140,17 +138,17 @@ AlgoRadar avoids treating every number as equally meaningful. The main user-faci
 
 - **Current rating**: official latest rating for that platform only.
 - **Max rating**: official peak rating for that platform only.
-- **Native rating**: a platform's own rating scale. AlgoRadar does not compare Codeforces, CodeChef, and LeetCode native ratings as equal numbers.
-- **CF-equivalent difficulty**: an internal calibrated difficulty reference used only by solve probability. CodeChef and LeetCode-style numeric difficulties are mapped through `data/platform_calibration.csv`.
-- **Recent accuracy**: accepted-submission rate across the latest 80 submissions.
-- **Rating-wise accuracy**: success rate grouped by official or estimated problem rating.
+- **Platform rating**: a platform's own rating scale. AlgoRadar does not compare Codeforces, CodeChef, and LeetCode rating numbers as if they mean the same thing.
+- **Shared difficulty scale**: an internal difficulty reference used only by solve estimate. CodeChef and LeetCode-style difficulties are mapped through `data/platform_calibration.csv`.
+- **Recent success**: accepted-submission rate across the latest submissions.
+- **Success by difficulty**: success rate grouped by official or estimated problem rating.
 - **Hardest solved**: highest-rated accepted problem for a tag.
-- **Repair priority**: a weakness score based on low accuracy, recent failures, and attempt volume.
-- **Solve probability**: a calibrated scorecard estimate that prioritizes solved volume, hardest solved difficulty, average solved difficulty, and the selected problem tags. Accuracy is intentionally not a primary signal because accepted submissions can be distorted by AI/editorial help.
+- **Focus score**: a topic score based on low success, recent failures, and attempt volume.
+- **Solve estimate**: a practical estimate that prioritizes rating gap, solved volume, hardest solved difficulty, average solved difficulty, and the selected problem tags. Success rate is intentionally not the main signal because accepted submissions can be distorted by AI/editorial help.
 - **Rating source**: `official` means Codeforces provides the problem rating; `estimated` means AlgoRadar inferred it from problem index and solved count.
 - **LeetCode problem reference**: LeetCode has Easy/Medium/Hard labels, topic tags, acceptance stats, and a frontend problem number. It does not expose an official problem rating or the original contest slot through the public problem lookup, so AlgoRadar lets the user add an optional Q1-Q4 contest-slot reference when known.
-- **LeetCode topic weakness**: coverage-based signal from public solved topic counters. LeetCode does not expose full public verdict history for every solved/failed problem.
-- **CodeChef weakness**: rating-history and practice-volume signal from the public profile. CodeChef public solved profiles do not expose reliable tag-level verdict history.
+- **LeetCode focus areas**: coverage-based signal from public solved topic counters. LeetCode does not expose full public verdict history for every solved/failed problem.
+- **CodeChef focus areas**: rating-history and practice-volume signal from the public profile. CodeChef public solved profiles do not expose reliable tag-level verdict history.
 - **Combined solved**: sum of public solved-count signals across connected platforms. It is useful for progress direction, not as a perfect apples-to-apples skill rating.
 
 ## Setup
@@ -235,7 +233,7 @@ http://localhost:8501
 
 Enter one or more platform handles and click **Analyze handles**. Missing handles are allowed; the related platform section will ask you to add that handle first.
 
-## Run the ML Pipeline from Terminal
+## Run Analysis from Terminal
 
 #### Windows
 
@@ -279,7 +277,7 @@ python3 scripts/run_analysis.py tourist --sample
 
 ## Optional Embeddings
 
-By default, AlgoRadar uses a fast TF-IDF vector search fallback for similar problems.
+By default, AlgoRadar uses a fast local search fallback for similar problems.
 
 To use `sentence-transformers/all-MiniLM-L6-v2`, install the optional dependencies:
 
@@ -317,7 +315,7 @@ Then start the app:
 streamlit run app.py
 ```
 
-Turn on **Use MiniLM embeddings** in the sidebar when using the Recommendations section. If the optional stack is not installed or the model cannot load, AlgoRadar falls back to TF-IDF retrieval.
+Turn on **Improve similar-problem matching** in the sidebar when using the Recommendations section. If the optional stack is not installed or the model cannot load, AlgoRadar falls back to the fast local matcher.
 
 By default, the Streamlit app only uses a locally cached MiniLM model so normal analysis does not hang on a first-time model download. To allow downloading from inside the app, set `ALGORADAR_ALLOW_MINILM_DOWNLOAD=1` before running Streamlit.
 
@@ -400,31 +398,6 @@ python -m pip install --upgrade -r requirements.txt
 streamlit run app.py
 ```
 
-## Free Deployment
-
-### Streamlit Community Cloud
-
-This is the easiest free permanent deployment.
-
-1. Push this repository to GitHub.
-2. Go to [https://share.streamlit.io](https://share.streamlit.io).
-3. Sign in with GitHub.
-4. Click **New app**.
-5. Select this repository.
-6. Set the main file path to:
-
-```text
-app.py
-```
-
-7. Deploy.
-
-Streamlit Cloud will install `requirements.txt` and run the app.
-
-### Temporary Public Link from Your Laptop
-
-You can also expose your local Streamlit app with a tunnel such as Cloudflare Tunnel. This is free but temporary. The link works only while your computer is on and the tunnel process is running.
-
 ## Project Structure
 
 ```text
@@ -434,19 +407,19 @@ AlgoRadar/
   requirements.txt               App dependencies
   requirements-dev.txt           Test dependencies
   requirements-embeddings.txt    Optional MiniLM embedding dependencies
-  runtime.txt                    Python runtime for cloud hosting
+  runtime.txt                    Python runtime version
   algoradar/
     codeforces.py                Codeforces API client and caching
     config.py                    Project paths and constants
     features.py                  pandas feature engineering
-    models.py                    contest and solve-probability models
+    models.py                    contest and solve-estimate models
     pipeline.py                  End-to-end analysis orchestration
     platforms.py                 LeetCode/CodeChef clients, normalization, combined analysis
     recommender.py               Problem ranking and recommendation logic
     sample_data.py               Reproducible fallback data
-    semantic.py                  TF-IDF / MiniLM similar-problem retrieval
-    solve_probability.py         Cross-platform solve-probability scorecard
-    weakness.py                  Rule baseline and weakness scoring
+    semantic.py                  Fast / MiniLM similar-problem retrieval
+    solve_probability.py         Cross-platform solve-estimate scorecard
+    weakness.py                  Rule-based focus scoring
   scripts/
     run_analysis.py              CLI pipeline runner
     verify_minilm.py             Download and test MiniLM embeddings
@@ -456,16 +429,16 @@ AlgoRadar/
     algoradar-screenshot-recommendations-table.png
     algoradar-screenshot-solve-probability.png
   tests/
-    test_pipeline.py             Smoke tests for the ML pipeline
+    test_pipeline.py             Smoke tests for the analysis pipeline
     test_platforms.py            Non-network tests for platform normalization
-    test_solve_probability.py    Cross-platform probability scorecard tests
+    test_solve_probability.py    Cross-platform solve-estimate tests
   data/
-    platform_calibration.csv     CodeChef/LeetCode difficulty to CF-equivalent calibration prior
+    platform_calibration.csv     CodeChef/LeetCode difficulty calibration prior
     cache/                       Cached API responses
     models/                      Trained local model reports
 ```
 
-## Solve Probability Buckets
+## Solve Estimate Buckets
 
 AlgoRadar classifies recommended problems into:
 
@@ -478,10 +451,10 @@ AlgoRadar classifies recommended problems into:
 
 - The dashboard uses real platform data by default.
 - API responses, profile pages, and problem catalogs are cached locally to improve speed.
-- Solve probability uses `data/platform_calibration.csv` as a calibration prior, not as ground-truth solved labels. It should be retrained later with real common-user solve outcomes if you collect that dataset.
-- Codeforces problem tags are pulled from the Codeforces problemset. LeetCode problem tags are pulled automatically when you enter a problem slug or URL in Solve probability.
+- Solve estimate uses `data/platform_calibration.csv` as a calibration prior, not as ground-truth solved labels. It should be retrained later with real common-user solve outcomes if you collect that dataset.
+- Codeforces problem tags are pulled from the Codeforces problemset. LeetCode problem tags are pulled automatically when you enter a problem slug or URL in Solve estimate.
 - First-time LeetCode/CodeChef recommendation pulls can take a few seconds because the app builds local caches. Reopening the same handles is much faster.
 - The app analyzes the latest 2,500 Codeforces submissions for a practical balance of speed and signal.
-- The recommender prefilters the problemset before model scoring so the app stays responsive.
-- The weakness classifier intentionally starts with transparent rules and model-style metrics. This mirrors real ML workflows where a baseline matters before collecting larger labeled outcome data.
+- The recommender prefilters the problemset before scoring so the app stays responsive.
+- Focus areas intentionally start with transparent rules so users can understand why a topic was marked important.
 - README preview screenshots live in `social_assets/` and can be replaced with newer app screenshots when the UI changes.

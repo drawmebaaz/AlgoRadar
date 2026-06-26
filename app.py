@@ -80,29 +80,32 @@ def main() -> None:
     render_sidebar()
 
     with st.sidebar:
-        codeforces_handle = st.text_input("Codeforces handle", key="codeforces_handle_input", help="Optional. Enables the deepest verdict-level ML analysis.")
+        codeforces_handle = st.text_input("Codeforces handle", key="codeforces_handle_input", help="Optional. Uses Codeforces submissions, ratings, tags, and verdicts.")
         codechef_handle = st.text_input("CodeChef handle", key="codechef_handle_input", help="Optional. Enables CodeChef rating and practice analysis.")
         leetcode_handle = st.text_input("LeetCode username", key="leetcode_handle_input", help="Optional. Enables LeetCode topic and contest analysis.")
         analyze = st.button("Analyze handles", **stretch_kwargs(st.button))
         force_refresh = st.toggle("Refresh platform caches", value=False)
         prefer_transformer = st.toggle(
-            "Use MiniLM embeddings",
+            "Improve similar-problem matching",
             value=False,
-            help="Uses all-MiniLM-L6-v2 for similar-problem retrieval. Run scripts/verify_minilm.py once after installing optional dependencies so the model is downloaded before using the toggle.",
+            help="Optional. Uses a local MiniLM model for better similar-problem matching. Run scripts/verify_minilm.py once after installing optional dependencies.",
         )
 
-        if "screen" not in st.session_state:
+        screen_options = [
+            "Combined analysis",
+            "Codeforces",
+            "CodeChef",
+            "LeetCode",
+            "Recommendations",
+            "Solve estimate",
+        ]
+        if st.session_state.get("screen") == "Solve probability":
+            st.session_state.screen = "Solve estimate"
+        if st.session_state.get("screen") not in screen_options:
             st.session_state.screen = "Combined analysis"
         screen = st.radio(
             "Sections",
-            [
-                "Combined analysis",
-                "Codeforces",
-                "CodeChef",
-                "LeetCode",
-                "Recommendations",
-                "Solve probability",
-            ],
+            screen_options,
             key="screen",
         )
 
@@ -155,9 +158,9 @@ def main() -> None:
         f"""
         <div class="hero">
           <div>
-            <p class="eyebrow">AlgoRadar / Multi-platform competitive programming intelligence</p>
+            <p class="eyebrow">AlgoRadar / competitive programming analytics</p>
             <h1>{hero_title}</h1>
-            <p class="subcopy">Add any combination of Codeforces, CodeChef, and LeetCode handles. Platform sections stay focused; recommendations are separated by platform, and solve probability uses the handles you provide.</p>
+            <p class="subcopy">Analyze Codeforces, CodeChef, and LeetCode handles in one place. Each platform stays separate, while recommendations and solve estimates use the handles you provide.</p>
           </div>
           <div class="source-pill">{source_label}</div>
         </div>
@@ -179,20 +182,20 @@ def main() -> None:
         render_platform_detail(external_results.get("leetcode"), "LeetCode")
     elif screen == "Recommendations":
         render_combined_recommendations(result, external_results, active_args)
-    elif screen == "Solve probability":
+    elif screen == "Solve estimate":
         render_general_probability(result, external_results, active_args)
 
 
 def _needs_codeforces(screen: str, active_args: dict[str, str]) -> bool:
     if screen == "Combined analysis":
         return _provided_handle_count(active_args) >= 2
-    return screen in {"Codeforces", "Recommendations", "Solve probability"}
+    return screen in {"Codeforces", "Recommendations", "Solve estimate"}
 
 
 def _external_handles_for_screen(screen: str, active_args: dict[str, str]) -> dict[str, str]:
     combined_ready = screen == "Combined analysis" and _provided_handle_count(active_args) >= 2
-    needs_leetcode = screen in {"LeetCode", "Recommendations", "Solve probability"} or combined_ready
-    needs_codechef = screen in {"CodeChef", "Recommendations", "Solve probability"} or combined_ready
+    needs_leetcode = screen in {"LeetCode", "Recommendations", "Solve estimate"} or combined_ready
+    needs_codechef = screen in {"CodeChef", "Recommendations", "Solve estimate"} or combined_ready
     return {
         "leetcode": active_args["leetcode"] if needs_leetcode else "",
         "codechef": active_args["codechef"] if needs_codechef else "",
@@ -238,7 +241,7 @@ def render_sidebar() -> None:
               <div class="brand-mark">AR</div>
               <div>
                 <strong>AlgoRadar</strong>
-                <span>CP weakness analyzer</span>
+                <span>CP analytics suite</span>
               </div>
             </div>
             """,
@@ -265,7 +268,7 @@ def render_profile(result) -> None:
     metric_card(cols[0], "Current rating", f"{profile['current_rating']}", "official Codeforces rating")
     metric_card(cols[1], "Max rating", f"{profile['max_rating']}", "peak Codeforces rating")
     metric_card(cols[2], "Solved", f"{profile['problems_solved']}", "unique accepted problems")
-    metric_card(cols[3], "Recent accuracy", f"{profile['recent_accuracy']}%", "last 80 submissions")
+    metric_card(cols[3], "Recent success", f"{profile['recent_accuracy']}%", "last 80 submissions")
 
     left, right = st.columns([1.45, 1])
     with left:
@@ -280,7 +283,7 @@ def render_profile(result) -> None:
                     y=result.contest_trend["rating"],
                     mode="lines+markers",
                     name="Rating",
-                    line=dict(color="#5ee0a0", width=2),
+                    line=dict(color="#4fce8a", width=2),
                 )
             )
             fig.add_trace(
@@ -288,7 +291,7 @@ def render_profile(result) -> None:
                     x=result.contest_trend["contest"],
                     y=result.contest_trend["delta"],
                     name="Delta",
-                    marker_color="#75a7ff",
+                    marker_color="#7aa7e8",
                     opacity=0.42,
                     yaxis="y2",
                 )
@@ -315,18 +318,18 @@ def render_profile(result) -> None:
 
     left, right = st.columns(2)
     with left:
-        panel_title("Rating-wise accuracy", "success rate by official or estimated problem rating")
+        panel_title("Success by difficulty", "accepted rate by official or estimated problem rating")
         frame = result.rating_accuracy.copy()
         if not frame.empty:
             fig = go.Figure()
-            fig.add_bar(x=frame["rating_bucket"], y=frame["attempts"], name="Attempts", marker_color="#2b3340")
+            fig.add_bar(x=frame["rating_bucket"], y=frame["attempts"], name="Attempts", marker_color="#242b35")
             fig.add_trace(
                 go.Scatter(
                     x=frame["rating_bucket"],
                     y=frame["accuracy"],
                     mode="lines+markers",
-                    name="Accuracy %",
-                    line=dict(color="#f8c76f", width=2),
+                    name="Success %",
+                    line=dict(color="#d9a441", width=2),
                     yaxis="y2",
                 )
             )
@@ -339,7 +342,7 @@ def render_profile(result) -> None:
         panel_title("Solved difficulty distribution", "where accepted problems cluster")
         frame = result.solved_difficulty
         if not frame.empty:
-            fig = go.Figure(go.Bar(x=frame["rating_bucket"], y=frame["solved"], marker_color="#5ee0a0"))
+            fig = go.Figure(go.Bar(x=frame["rating_bucket"], y=frame["solved"], marker_color="#4fce8a"))
             fig.update_layout(**chart_layout())
             st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
         else:
@@ -356,8 +359,8 @@ def render_combined_profile(result, external_results: dict) -> None:
     cols = st.columns(4)
     metric_card(cols[0], "Total solved", str(summary["total_solved"]), "all connected platforms")
     metric_card(cols[1], "Platforms", f"{summary['platforms_connected']}/3", "active public profiles")
-    metric_card(cols[2], "Focus areas", str(summary["focus_areas"]), "combined weakness signals")
-    metric_card(cols[3], "Priority platform", summary["attention_platform"], "highest repair signal")
+    metric_card(cols[2], "Focus areas", str(summary["focus_areas"]), "topics that need attention")
+    metric_card(cols[3], "Needs attention", summary["attention_platform"], "highest improvement need")
 
     if platforms.empty:
         st.info("Add handles in the sidebar, then click Analyze handles.")
@@ -365,18 +368,18 @@ def render_combined_profile(result, external_results: dict) -> None:
 
     left, right = st.columns([1.1, 1])
     with left:
-        panel_title("Platform breakdown", "provided handles and cached public-data signals")
+        panel_title("Platform breakdown", "what was loaded from each public profile")
         show = platforms.rename(
             columns={
                 "platform": "Platform",
                 "handle": "Handle",
                 "status": "Status",
                 "solved": "Solved",
-                "current_rating": "Native rating",
-                "max_rating": "Native max",
+                "current_rating": "Current rating",
+                "max_rating": "Best rating",
                 "contests": "Contests",
-                "accuracy": "Accuracy %",
-                "signal": "Data signal",
+                "accuracy": "Success %",
+                "signal": "Data available",
             }
         )
         st.dataframe(show, **stretch_kwargs(st.dataframe), hide_index=True)
@@ -399,23 +402,23 @@ def render_combined_profile(result, external_results: dict) -> None:
 
     left, right = st.columns([1.2, 1])
     with left:
-        panel_title("Combined focus map", "highest-priority areas across platforms")
+        panel_title("What to work on next", "topics and platform areas that need attention")
         if focus.empty:
-            st.info("No weakness signals available yet.")
+            st.info("No focus areas available yet.")
         else:
             show = focus.rename(
                 columns={
                     "platform": "Platform",
                     "area": "Area",
                     "level": "Level",
-                    "priority": "Priority",
+                    "priority": "Focus score",
                     "next_action": "Next action",
                 }
             )
             st.dataframe(show.head(12), **stretch_kwargs(st.dataframe), hide_index=True)
 
     with right:
-        panel_title("Native rating trend", "contest signals in each platform's own scale")
+        panel_title("Contest rating trend", "each platform keeps its own rating scale")
         if trend.empty:
             st.info("No contest rating history found.")
         else:
@@ -454,26 +457,26 @@ def render_leetcode_detail(analysis) -> None:
     profile = analysis.profile
     cols = st.columns(4)
     metric_card(cols[0], "Solved", str(profile.get("total_solved", 0)), "Easy + Medium + Hard")
-    metric_card(cols[1], "Contest rating", str(profile.get("contest_rating", 0)), "LeetCode native rating")
+    metric_card(cols[1], "Contest rating", str(profile.get("contest_rating", 0)), "LeetCode rating")
     metric_card(cols[2], "Acceptance", f"{profile.get('acceptance_rate', 0)}%", "accepted submissions / submissions")
     metric_card(cols[3], "Ranking", str(profile.get("ranking", 0)), "global profile rank")
 
     left, right = st.columns([1.1, 1])
     with left:
-        panel_title("Difficulty accuracy", "accepted and attempted submissions by difficulty")
+        panel_title("Success by difficulty", "accepted and attempted submissions by difficulty")
         difficulty = analysis.difficulty.copy()
         if difficulty.empty:
             st.info("No public difficulty stats available.")
         else:
             fig = go.Figure()
-            fig.add_bar(x=difficulty["difficulty"], y=difficulty["solved"], name="Solved", marker_color="#5ee0a0")
+            fig.add_bar(x=difficulty["difficulty"], y=difficulty["solved"], name="Solved", marker_color="#4fce8a")
             fig.add_trace(
                 go.Scatter(
                     x=difficulty["difficulty"],
                     y=difficulty["accuracy"],
                     mode="lines+markers",
-                    name="Accuracy %",
-                    line=dict(color="#f8c76f", width=2),
+                    name="Success %",
+                    line=dict(color="#d9a441", width=2),
                     yaxis="y2",
                 )
             )
@@ -487,14 +490,14 @@ def render_leetcode_detail(analysis) -> None:
             st.info("No public LeetCode contest history found.")
         else:
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=trend["contest"], y=trend["rating"], mode="lines+markers", name="Rating", line=dict(color="#75a7ff")))
-            fig.add_bar(x=trend["contest"], y=trend["delta"], name="Delta", marker_color="#2b3340", yaxis="y2")
+            fig.add_trace(go.Scatter(x=trend["contest"], y=trend["rating"], mode="lines+markers", name="Rating", line=dict(color="#7aa7e8")))
+            fig.add_bar(x=trend["contest"], y=trend["delta"], name="Delta", marker_color="#242b35", yaxis="y2")
             fig.update_layout(yaxis2=dict(overlaying="y", side="right", showgrid=False), **chart_layout())
             st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
 
     left, right = st.columns([1.2, 1])
     with left:
-        panel_title("LeetCode weakness map", "coverage-based topic classifier")
+        panel_title("LeetCode focus areas", "topics with low public solved coverage")
         weakness = analysis.weakness.copy()
         if weakness.empty:
             st.info("No tag coverage data available.")
@@ -505,7 +508,7 @@ def render_leetcode_detail(analysis) -> None:
                     "tag": "Topic",
                     "level": "Level",
                     "solved": "Solved",
-                    "priority_score": "Priority",
+                    "priority_score": "Focus score",
                     "next_action": "Next action",
                     "source": "Source",
                 }
@@ -519,7 +522,7 @@ def render_leetcode_detail(analysis) -> None:
             st.info("No public tag counters available.")
         else:
             sorted_tags = tags.sort_values("solved")
-            fig = go.Figure(go.Bar(x=sorted_tags["solved"], y=sorted_tags["tag"], orientation="h", marker_color="#5ee0a0"))
+            fig = go.Figure(go.Bar(x=sorted_tags["solved"], y=sorted_tags["tag"], orientation="h", marker_color="#4fce8a"))
             fig.update_layout(**chart_layout(height=480), showlegend=False)
             st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
 
@@ -540,8 +543,8 @@ def render_codechef_detail(analysis) -> None:
             st.info("No CodeChef rating history found.")
         else:
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=trend["contest"], y=trend["rating"], mode="lines+markers", name="Rating", line=dict(color="#5ee0a0")))
-            fig.add_bar(x=trend["contest"], y=trend["delta"], name="Delta", marker_color="#75a7ff", opacity=0.42, yaxis="y2")
+            fig.add_trace(go.Scatter(x=trend["contest"], y=trend["rating"], mode="lines+markers", name="Rating", line=dict(color="#4fce8a")))
+            fig.add_bar(x=trend["contest"], y=trend["delta"], name="Delta", marker_color="#7aa7e8", opacity=0.42, yaxis="y2")
             fig.update_layout(yaxis2=dict(overlaying="y", side="right", showgrid=False), **chart_layout(height=430))
             st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
 
@@ -551,21 +554,21 @@ def render_codechef_detail(analysis) -> None:
         if difficulty.empty:
             st.info("No solved section data available.")
         else:
-            fig = go.Figure(go.Bar(x=difficulty["difficulty"], y=difficulty["solved"], marker_color="#f8c76f"))
+            fig = go.Figure(go.Bar(x=difficulty["difficulty"], y=difficulty["solved"], marker_color="#d9a441"))
             fig.update_layout(**chart_layout(height=430), showlegend=False)
             st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
 
-    panel_title("CodeChef weakness signals", "rating-history and practice-volume signals")
+    panel_title("CodeChef focus areas", "rating history and practice volume")
     weakness = analysis.weakness.copy()
     if weakness.empty:
-        st.info("No CodeChef weakness signals available.")
+        st.info("No CodeChef focus areas available.")
     else:
         show = weakness[["tag", "level", "attempts", "priority_score", "next_action", "source"]].rename(
             columns={
                 "tag": "Area",
                 "level": "Level",
                 "attempts": "Signal value",
-                "priority_score": "Priority",
+                "priority_score": "Focus score",
                 "next_action": "Next action",
                 "source": "Source",
             }
@@ -664,7 +667,7 @@ def render_general_probability(result, external_results: dict, active_args: dict
 
     left, right = st.columns([0.95, 1.05])
     with left:
-        panel_title("Problem context", "works with whichever handles you provided")
+        panel_title("Problem details", "works with whichever handles you provided")
         platform = st.selectbox("Problem platform", options=available_platforms)
         tags_options = available_probability_tags(result, external_results)
         default_tags = _default_probability_tags(result, external_results)
@@ -688,12 +691,12 @@ def render_general_probability(result, external_results: dict, active_args: dict
             leetcode_contest_slot=context.get("leetcode_contest_slot", "Unknown"),
         )
         st.caption(
-            "Ratings are first calibrated onto a CF-equivalent difficulty scale using the mapping CSV. "
-            "The score prioritizes solved volume, hardest solved difficulty, and selected-tag strength; accuracy is not a primary signal."
+            "Different platforms use different difficulty scales, so AlgoRadar first converts the problem into one shared estimate. "
+            "The estimate mainly uses rating gap, solved depth on the selected tags, and your hardest similar solves."
         )
 
     with right:
-        panel_title("Solve probability", "calibrated handle-aware estimate")
+        panel_title("Solve estimate", "practical chance for an honest attempt")
         probability = score["solve_probability_pct"]
         fig = go.Figure(
             go.Indicator(
@@ -701,7 +704,7 @@ def render_general_probability(result, external_results: dict, active_args: dict
                 value=probability,
                 number={"suffix": "%", "font": {"color": "#eef2f6"}},
                 gauge={
-                    "axis": {"range": [0, 100], "tickcolor": "#6f7886"},
+                    "axis": {"range": [0, 100], "tickcolor": "#8a95a5"},
                     "bar": {"color": bucket_color(score["bucket"])},
                     "bgcolor": "#151922",
                     "bordercolor": "#252b35",
@@ -719,13 +722,12 @@ def render_general_probability(result, external_results: dict, active_args: dict
         st.markdown(f"<div class='bucket-label'>{score['bucket'].upper()}</div>", unsafe_allow_html=True)
 
     cols = st.columns(4)
-    metric_card(cols[0], "User CF-eq anchor", str(int(score["anchor_cf_equivalent"])), "calibrated from provided handles")
-    metric_card(cols[1], "Target CF-eq", str(int(score["target_cf_equivalent"])), str(score["native_target"]))
-    metric_card(cols[2], "Tag solves", str(int(score["tag_solved"])), "selected tags / aliases")
-    metric_card(cols[3], "Tag ceiling", str(int(score["tag_rating_ceiling"])), "hardest solved signal")
-    st.caption(f"Calibration: {score['calibration_source']} | confidence: {score['calibration_confidence']} | weight: {score['calibration_weight']}")
+    metric_card(cols[0], "Estimated level", str(int(score["anchor_cf_equivalent"])), "shared difficulty scale")
+    metric_card(cols[1], "Problem level", str(int(score["target_cf_equivalent"])), str(score["native_target"]))
+    metric_card(cols[2], "Tag practice", str(int(score["tag_solved"])), "solved on selected tags")
+    metric_card(cols[3], "Hardest similar", str(int(score["tag_rating_ceiling"])), "selected tags")
 
-    panel_title("Why this probability", "volume and rating-strength inputs")
+    panel_title("Why this estimate", "the main signals behind the number")
     st.dataframe(score["factors"], **stretch_kwargs(st.dataframe), hide_index=True)
 
 
@@ -815,7 +817,7 @@ def _leetcode_probability_inputs(tags_options: list[str], default_tags: list[str
                 """,
                 unsafe_allow_html=True,
             )
-            st.caption("LeetCode has no official problem rating. AlgoRadar uses difficulty, tags, acceptance, and optional Q1-Q4 slot as calibrated references.")
+            st.caption("LeetCode has no official problem rating. AlgoRadar estimates difficulty from Easy/Medium/Hard, tags, acceptance, and the optional contest slot.")
             return {
                 "target_rating": None,
                 "tags": tags or fetched_tags,
@@ -841,7 +843,7 @@ def _manual_probability_inputs(platform: str, tags_options: list[str], default_t
             help="Optional reference if the problem came from a LeetCode contest.",
         )
         rating = None
-        st.caption("LeetCode has no official problem rating. Difficulty and optional contest slot are calibrated onto a CF-equivalent scale.")
+        st.caption("LeetCode has no official problem rating. AlgoRadar estimates difficulty from Easy/Medium/Hard and the optional contest slot.")
     elif platform == "CodeChef":
         rating = st.slider("CodeChef problem rating (native)", min_value=400, max_value=5000, value=1500, step=50)
         difficulty = ""
@@ -884,14 +886,15 @@ def _default_probability_tags(result, external_results: dict) -> list[str]:
 def render_weakness(result) -> None:
     cols = st.columns(4)
     weakness = result.weakness
-    metric_card(cols[0], "Weak tags", str((weakness["level"] == "Weak").sum()), "rule baseline")
-    metric_card(cols[1], "Untouched tags", str((weakness["level"] == "Untouched").sum()), "coverage gap")
-    metric_card(cols[2], "Rule vs ML agreement", f"{weakness['rule_matches_ml'].mean() * 100:.1f}%", "baseline comparison")
-    metric_card(cols[3], "ML accuracy", f"{result.weakness_model['metrics']['accuracy'] * 100:.1f}%", "synthetic validation")
+    focus_count = int(weakness["level"].isin(["Weak", "Over-attempted but low accuracy"]).sum())
+    metric_card(cols[0], "Focus tags", str(focus_count), "need structured practice")
+    metric_card(cols[1], "Low coverage", str((weakness["level"] == "Untouched").sum()), "not tried enough yet")
+    metric_card(cols[2], "High effort tags", str((weakness["level"] == "Over-attempted but low accuracy").sum()), "many tries, low return")
+    metric_card(cols[3], "Recent misses", str(int(weakness["recent_failures"].sum())), "latest failed attempts")
 
     left, right = st.columns([1.55, 1])
     with left:
-        panel_title("Weakness classifier", "accuracy, attempts, rating, recency")
+        panel_title("Tag focus table", "attempts, success rate, hardest solved, and recent misses")
         show = weakness[
             [
                 "tag",
@@ -906,45 +909,45 @@ def render_weakness(result) -> None:
         ].copy()
         show["accuracy"] = show["accuracy"].round(1)
         show["max_rating_solved"] = show["max_rating_solved"].round(0)
+        show["level"] = show["level"].apply(_friendly_level_label)
         show = show.rename(
             columns={
                 "tag": "Tag",
-                "level": "Level",
+                "level": "Status",
                 "attempts": "Attempts",
-                "accuracy": "Accuracy %",
+                "accuracy": "Success %",
                 "max_rating_solved": "Hardest solved",
-                "recent_failures": "Recent fails",
-                "priority_score": "Repair priority",
+                "recent_failures": "Recent misses",
+                "priority_score": "Focus score",
                 "next_action": "Next action",
             }
         )
         st.dataframe(show, **stretch_kwargs(st.dataframe), height=520)
 
     with right:
-        panel_title("Most failed tags", "repair priority")
+        panel_title("Top focus tags", "higher score means more attention needed")
         top = weakness.head(10).sort_values("priority_score", ascending=True)
         level_colors = {
-            "Strong": "#5ee0a0",
-            "Stable": "#75a7ff",
-            "Weak": "#f28b82",
-            "Untouched": "#6f7886",
-            "Over-attempted but low accuracy": "#f8c76f",
+            "Strong": "#4fce8a",
+            "Stable": "#7aa7e8",
+            "Needs focus": "#e67878",
+            "Low coverage": "#8a95a5",
+            "High effort, low return": "#d9a441",
         }
+        top = top.copy()
+        top["level_label"] = top["level"].apply(_friendly_level_label)
         fig = go.Figure(
             go.Bar(
                 x=top["priority_score"],
                 y=top["tag"],
                 orientation="h",
-                marker_color=top["level"].map(level_colors).fillna("#75a7ff"),
-                customdata=top["level"],
-                hovertemplate="Tag: %{y}<br>Priority: %{x}<br>Level: %{customdata}<extra></extra>",
+                marker_color=top["level_label"].map(level_colors).fillna("#7aa7e8"),
+                customdata=top["level_label"],
+                hovertemplate="Tag: %{y}<br>Focus score: %{x}<br>Status: %{customdata}<extra></extra>",
             )
         )
         fig.update_layout(**chart_layout(height=520), showlegend=False)
         st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
-
-    panel_title("Explainability", "random forest feature importance for weakness model")
-    st.dataframe(result.weakness_model["feature_importance"], **stretch_kwargs(st.dataframe), hide_index=True)
 
 
 def render_recommendations(result) -> None:
@@ -958,14 +961,14 @@ def render_recommendations(result) -> None:
     metric_card(cols[0], "Confidence builders", str(counts.get("confidence", 0)), ">75% solve chance")
     metric_card(cols[1], "Growth problems", str(counts.get("growth", 0)), "45-75% solve chance")
     metric_card(cols[2], "Stretch problems", str(counts.get("stretch", 0)), "25-45% solve chance")
-    metric_card(cols[3], "Semantic method", result.semantic_method, "similar problem finder")
+    metric_card(cols[3], "Similar matching", _friendly_matching_method(result.semantic_method), "problem finder")
 
     for bucket, label in [
         ("confidence", "5 confidence builders"),
         ("growth", "10 growth problems"),
         ("stretch", "5 stretch problems"),
     ]:
-        panel_title(label, "ranked by probability, tag fit, popularity, and rating distance")
+        panel_title(label, "ranked by solve chance, tag fit, popularity, and difficulty gap")
         frame = recs[recs["bucket"] == bucket].copy()
         if frame.empty:
             st.info(f"No {bucket} recommendations found for this handle yet.")
@@ -998,11 +1001,11 @@ def render_recommendations(result) -> None:
                 "rating_source": st.column_config.TextColumn("Rating source"),
                 "solve_probability_pct": st.column_config.NumberColumn("Solve %", format="%.1f%%"),
                 "tag_similarity": st.column_config.NumberColumn("Tag fit", format="%.2f"),
-                "rank_score": st.column_config.NumberColumn("Rank score", format="%.3f"),
+                "rank_score": st.column_config.NumberColumn("Fit score", format="%.3f"),
             },
         )
 
-    panel_title("Similar-but-harder retrieval", "embeddings/vector search layer")
+    panel_title("Similar harder problems", "matched from title, tags, and difficulty")
     if result.similar_harder.empty:
         st.info("No similar harder problems found.")
     else:
@@ -1034,7 +1037,7 @@ def render_progress(result) -> None:
     latest = progress.iloc[-1]
     metric_card(cols[0], "Latest solves", str(int(latest["solved"])), "accepted submissions")
     metric_card(cols[1], "Attempts", str(int(latest["attempts"])), "latest week")
-    metric_card(cols[2], "Accuracy", f"{latest['accuracy']:.1f}%", "latest week")
+    metric_card(cols[2], "Success", f"{latest['accuracy']:.1f}%", "latest week")
     metric_card(
         cols[3],
         "Growth attempts",
@@ -1042,17 +1045,17 @@ def render_progress(result) -> None:
         f"{result.profile['growth_rating_low']}-{result.profile['growth_rating_high']} rating",
     )
 
-    panel_title("Progress tracking", "weekly solve volume and accuracy")
+    panel_title("Progress tracking", "weekly solve volume and success rate")
     fig = go.Figure()
-    fig.add_bar(x=progress["week"], y=progress["attempts"], name="Attempts", marker_color="#2b3340")
-    fig.add_trace(go.Scatter(x=progress["week"], y=progress["solved"], mode="lines+markers", name="Solved", line=dict(color="#5ee0a0")))
+    fig.add_bar(x=progress["week"], y=progress["attempts"], name="Attempts", marker_color="#242b35")
+    fig.add_trace(go.Scatter(x=progress["week"], y=progress["solved"], mode="lines+markers", name="Solved", line=dict(color="#4fce8a")))
     fig.add_trace(
         go.Scatter(
             x=progress["week"],
             y=progress["accuracy"],
             mode="lines+markers",
-            name="Accuracy %",
-            line=dict(color="#f8c76f"),
+            name="Success %",
+            line=dict(color="#d9a441"),
             yaxis="y2",
         )
     )
@@ -1067,6 +1070,8 @@ def _show_recommendations_table(recommendations: pd.DataFrame, show_platform: bo
     frame = recommendations.copy()
     if "tags" in frame.columns:
         frame["tags"] = frame["tags"].apply(_format_tags)
+    if "reason" in frame.columns:
+        frame["reason"] = frame["reason"].apply(_friendly_recommendation_reason)
     if "rank_score" in frame.columns:
         frame["rank_score"] = pd.to_numeric(frame["rank_score"], errors="coerce").round(3)
     if "acceptance_rate" in frame.columns:
@@ -1108,7 +1113,7 @@ def _show_recommendations_table(recommendations: pd.DataFrame, show_platform: bo
             "tags": st.column_config.TextColumn("Tags"),
             "solve_probability_pct": st.column_config.NumberColumn("Solve %", format="%.1f%%"),
             "acceptance_rate": st.column_config.NumberColumn("Accept %", format="%.1f%%"),
-            "rank_score": st.column_config.NumberColumn("Rank score", format="%.3f"),
+            "rank_score": st.column_config.NumberColumn("Fit score", format="%.3f"),
             "url": st.column_config.LinkColumn("Open", display_text="Open"),
             "reason": st.column_config.TextColumn("Why"),
         },
@@ -1146,16 +1151,16 @@ def chart_layout(height: int = 390) -> dict:
         "height": height,
         "paper_bgcolor": "rgba(0,0,0,0)",
         "plot_bgcolor": "rgba(0,0,0,0)",
-        "font": {"color": "#a0a8b5", "family": "Inter, sans-serif"},
-        "margin": {"l": 20, "r": 20, "t": 22, "b": 30},
+        "font": {"color": "#a8b3c1", "family": "Inter, sans-serif"},
+        "margin": {"l": 22, "r": 18, "t": 24, "b": 32},
         "legend": {"orientation": "h", "y": 1.08, "x": 0},
-        "xaxis": {"gridcolor": "#242a33", "zerolinecolor": "#242a33"},
-        "yaxis": {"gridcolor": "#242a33", "zerolinecolor": "#242a33"},
+        "xaxis": {"gridcolor": "#242b35", "zerolinecolor": "#242b35"},
+        "yaxis": {"gridcolor": "#242b35", "zerolinecolor": "#242b35"},
     }
 
 
 def palette() -> list[str]:
-    return ["#5ee0a0", "#f28b82", "#f8c76f", "#75a7ff", "#6f7886"]
+    return ["#4fce8a", "#e67878", "#d9a441", "#7aa7e8", "#8a95a5"]
 
 
 def _series_colors(values) -> list[str]:
@@ -1166,11 +1171,22 @@ def _series_colors(values) -> list[str]:
 
 def bucket_color(bucket: str) -> str:
     return {
-        "confidence": "#5ee0a0",
-        "growth": "#f8c76f",
-        "stretch": "#f28b82",
-        "avoid": "#6f7886",
-    }.get(bucket, "#75a7ff")
+        "confidence": "#4fce8a",
+        "growth": "#d9a441",
+        "stretch": "#e67878",
+        "avoid": "#8a95a5",
+    }.get(bucket, "#7aa7e8")
+
+
+def _friendly_matching_method(method: str) -> str:
+    value = str(method or "").lower()
+    if "minilm" in value or "sentence" in value:
+        return "Deep matching"
+    if "tfidf" in value:
+        return "Fast matching"
+    if "deferred" in value:
+        return "On demand"
+    return "Available"
 
 
 def _default_problem_code(result) -> str:
@@ -1203,6 +1219,28 @@ def _format_tags(tags) -> str:
     return str(tags)
 
 
+def _friendly_recommendation_reason(reason) -> str:
+    text = str(reason or "")
+    replacements = {
+        "weak-tag-fit": "good practice for",
+        "weak tag fit": "good practice for",
+        "focus tag fit": "good practice for",
+        "weak-tag": "focus tag",
+        "rank score": "fit score",
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text
+
+
+def _friendly_level_label(level) -> str:
+    return {
+        "Weak": "Needs focus",
+        "Untouched": "Low coverage",
+        "Over-attempted but low accuracy": "High effort, low return",
+    }.get(str(level or ""), str(level or ""))
+
+
 def _codeforces_problem_url(row: pd.Series) -> str:
     contest_id = row.get("contest_id")
     index = row.get("index")
@@ -1224,51 +1262,54 @@ def inject_css() -> None:
         """
         <style>
         :root {
-          --bg: #08090b;
-          --surface: #101216;
-          --surface-2: #151922;
-          --border: #252b35;
-          --text: #eef2f6;
-          --muted: #a0a8b5;
-          --faint: #6f7886;
-          --green: #5ee0a0;
-          --amber: #f8c76f;
-          --red: #f28b82;
-          --blue: #75a7ff;
+          --bg: #0b0d10;
+          --sidebar: #0d1014;
+          --surface: #11151b;
+          --surface-2: #171c24;
+          --surface-3: #1b212a;
+          --border: #26303a;
+          --text: #f3f6fa;
+          --muted: #a8b3c1;
+          --faint: #7e8a99;
+          --green: #4fce8a;
+          --amber: #d9a441;
+          --red: #e67878;
+          --blue: #7aa7e8;
         }
         .stApp {
-          background:
-            linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px) 0 0 / 72px 72px,
-            linear-gradient(0deg, rgba(255,255,255,.028) 1px, transparent 1px) 0 0 / 72px 72px,
-            var(--bg);
+          background: var(--bg);
           color: var(--text);
         }
         section[data-testid="stSidebar"] {
-          background: #0a0c0f;
+          background: var(--sidebar);
           border-right: 1px solid var(--border);
         }
+        header[data-testid="stHeader"] {
+          background: var(--bg);
+        }
         .block-container {
-          max-width: 1480px;
-          padding-top: 1.4rem;
+          max-width: 1380px;
+          padding-top: 3.2rem;
           padding-bottom: 3rem;
         }
         .brand {
           display: flex;
           align-items: center;
           gap: 12px;
-          padding: 8px 0 18px;
+          padding: 6px 0 20px;
         }
         .brand-mark {
           display: grid;
           place-items: center;
-          width: 38px;
-          height: 38px;
-          border: 1px solid #38414e;
+          width: 40px;
+          height: 40px;
+          border: 1px solid #303a46;
           border-radius: 8px;
-          background: #131720;
+          background: #121720;
           color: var(--green);
           font-family: ui-monospace, Consolas, monospace;
           font-weight: 800;
+          font-size: 15px;
           letter-spacing: 0;
         }
         .brand strong {
@@ -1289,18 +1330,22 @@ def inject_css() -> None:
           align-items: flex-start;
           justify-content: space-between;
           gap: 20px;
-          margin-bottom: 18px;
-          padding: 20px;
+          margin-bottom: 20px;
+          padding: 18px 20px;
           border: 1px solid var(--border);
           border-radius: 8px;
-          background: rgba(16,18,22,.92);
-          box-shadow: inset 0 1px 0 rgba(255,255,255,.035);
+          background: var(--surface);
+          box-shadow: none;
+        }
+        .hero > div:first-child {
+          min-width: 0;
         }
         .hero h1 {
-          margin: 4px 0 6px;
+          margin: 6px 0 6px;
           color: var(--text);
-          font-size: 34px;
-          line-height: 1.05;
+          font-size: 30px;
+          line-height: 1.12;
+          font-weight: 760;
           letter-spacing: 0;
         }
         .eyebrow,
@@ -1313,7 +1358,8 @@ def inject_css() -> None:
           letter-spacing: 0;
         }
         .subcopy {
-          max-width: 760px;
+          margin: 0;
+          max-width: 800px;
           color: var(--muted);
           font-size: 14px;
           line-height: 1.55;
@@ -1324,38 +1370,44 @@ def inject_css() -> None:
           align-items: center;
           min-height: 28px;
           padding: 4px 10px;
-          border: 1px solid rgba(94,224,160,.3);
+          border: 1px solid rgba(79,206,138,.34);
           border-radius: 999px;
-          background: rgba(94,224,160,.06);
+          background: rgba(79,206,138,.08);
           color: var(--green);
           font-family: ui-monospace, Consolas, monospace;
           font-size: 12px;
           letter-spacing: 0;
-          white-space: nowrap;
+          white-space: normal;
+          overflow-wrap: anywhere;
+          text-align: center;
+          flex: 0 1 auto;
+          max-width: min(420px, 100%);
         }
         .metric-card,
         .day-card,
         .rule-list {
-          min-height: 112px;
+          min-height: 106px;
           margin-bottom: 14px;
-          padding: 15px;
+          padding: 16px;
           border: 1px solid var(--border);
           border-radius: 8px;
-          background: rgba(16,18,22,.92);
-          box-shadow: inset 0 1px 0 rgba(255,255,255,.035);
+          background: var(--surface);
+          box-shadow: none;
+          overflow: hidden;
         }
         .metric-card p {
           margin: 0;
           color: var(--muted);
           font-size: 12px;
           font-weight: 650;
+          overflow-wrap: anywhere;
         }
         .metric-card strong {
           display: block;
           margin-top: 10px;
           color: var(--text);
           font-family: ui-monospace, Consolas, monospace;
-          font-size: 26px;
+          font-size: 25px;
           line-height: 1.05;
           letter-spacing: 0;
           overflow-wrap: anywhere;
@@ -1365,9 +1417,10 @@ def inject_css() -> None:
           margin-top: 9px;
           color: var(--faint);
           font-size: 12px;
+          overflow-wrap: anywhere;
         }
         .panel-title {
-          margin: 18px 0 10px;
+          margin: 22px 0 10px;
         }
         .panel-title h2 {
           margin: 4px 0 0;
@@ -1381,8 +1434,11 @@ def inject_css() -> None:
           padding: 10px;
           border: 1px solid var(--border);
           border-radius: 8px;
-          background: rgba(16,18,22,.92);
-          box-shadow: inset 0 1px 0 rgba(255,255,255,.035);
+          background: var(--surface);
+          box-shadow: none;
+        }
+        .stDataFrame {
+          overflow-x: auto;
         }
         .day-card {
           min-height: 188px;
@@ -1392,7 +1448,7 @@ def inject_css() -> None:
           padding: 2px 7px;
           border: 1px solid #2b313c;
           border-radius: 5px;
-          background: #0b0d11;
+          background: #0e1217;
           color: #d9e1ea;
           font-family: ui-monospace, Consolas, monospace;
           font-size: 12px;
@@ -1413,7 +1469,7 @@ def inject_css() -> None:
           height: 7px;
           margin-top: 16px;
           border-radius: 999px;
-          background: #222832;
+          background: #222a34;
         }
         .meter span {
           display: block;
@@ -1423,21 +1479,71 @@ def inject_css() -> None:
         }
         button[kind="primary"],
         .stButton > button {
-          border: 1px solid #3a4452;
+          min-height: 42px;
+          border: 1px solid #344152;
           border-radius: 7px;
-          background: #18201f;
+          background: #14201a;
           color: var(--green);
           font-weight: 750;
+          line-height: 1.2;
+          white-space: normal;
+        }
+        .stButton > button:hover {
+          border-color: rgba(79,206,138,.52);
+          background: #17271f;
+          color: var(--green);
         }
         .stTextInput input,
         .stNumberInput input,
-        .stSelectbox div,
-        .stMultiSelect div {
-          border-color: #343b47;
-          background-color: #0f1217;
+        .stSelectbox [data-baseweb="select"] > div,
+        .stMultiSelect [data-baseweb="select"] > div {
+          border-color: #303946;
+          background-color: #10141a;
           color: var(--text);
         }
+        .stTextInput input,
+        .stNumberInput input {
+          min-height: 42px;
+        }
+        .stMultiSelect [data-baseweb="tag"] {
+          max-width: 100%;
+          margin-top: 2px;
+          margin-bottom: 2px;
+        }
+        .stMultiSelect [data-baseweb="tag"] span {
+          display: inline-block;
+          max-width: min(220px, 56vw);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        div[data-testid="stAlert"] {
+          border-radius: 8px;
+          border: 1px solid #273343;
+          background: #0f1720;
+          overflow-wrap: anywhere;
+        }
+        .stTabs [data-baseweb="tab-list"] {
+          gap: 18px;
+          border-bottom: 1px solid var(--border);
+          overflow-x: auto;
+          overflow-y: hidden;
+        }
+        .stTabs [data-baseweb="tab"] {
+          height: 42px;
+          padding: 0 2px;
+          color: var(--muted);
+          font-weight: 650;
+          flex: 0 0 auto;
+          white-space: nowrap;
+        }
+        .stTabs [aria-selected="true"] {
+          color: var(--green);
+        }
         @media (max-width: 900px) {
+          .block-container {
+            padding-top: 3.6rem;
+          }
           .hero {
             display: block;
           }

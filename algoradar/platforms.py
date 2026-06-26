@@ -310,7 +310,7 @@ def combined_recommendations(
         cf["title"] = cf["name"]
         cf["difficulty"] = cf["rating"].astype(int).astype(str)
         cf["url"] = cf.apply(_codeforces_url_from_recommendation, axis=1)
-        cf["reason"] = cf["tags"].apply(lambda tags: _tag_reason(tags, "Codeforces weak-tag fit"))
+        cf["reason"] = cf["tags"].apply(lambda tags: _tag_reason(tags, "Good Codeforces practice for"))
         cf["acceptance_rate"] = ""
         frames.append(
             cf[
@@ -991,7 +991,7 @@ def _leetcode_recommendations(
             lambda row: _leetcode_solve_probability(row, bucket, total_solved, target_rank),
             axis=1,
         )
-        subset["reason"] = subset["tags"].apply(lambda tags: _tag_reason(tags, "LeetCode weak-tag coverage"))
+        subset["reason"] = subset["tags"].apply(lambda tags: _tag_reason(tags, "Good LeetCode practice for"))
         rows.append(subset)
 
     result = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
