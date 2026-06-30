@@ -8,8 +8,6 @@ AlgoRadar is a competitive programming analytics and recommendation system for C
 
 The goal is not just to show charts. AlgoRadar builds a full data pipeline: API ingestion, caching, data cleaning, feature engineering, transparent scoring rules, calibrated solve estimates, problem ranking, and similar-problem search. Codeforces has the deepest signal because its official API exposes verdict-level submissions. LeetCode and CodeChef are normalized into the same product experience using their public profile, contest, topic, and practice-problem data.
 
-Read the development write-up here: [Building AlgoRadar: Problems Faced and How We Solved Them](DEVELOPMENT_BLOG.md).
-
 ## Features
 
 - Optional Codeforces, CodeChef, and LeetCode handle inputs
@@ -403,7 +401,6 @@ streamlit run app.py
 ```text
 AlgoRadar/
   app.py                         Streamlit dashboard
-  DEVELOPMENT_BLOG.md            Development problems and fixes write-up
   requirements.txt               App dependencies
   requirements-dev.txt           Test dependencies
   requirements-embeddings.txt    Optional MiniLM embedding dependencies
