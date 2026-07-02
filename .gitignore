@@ -21,6 +21,7 @@ data/models/*
 !data/cache/.gitkeep
 !data/models/.gitkeep
 ALGORADAR_PROJECT_MASTER_GUIDE.txt
+ALGORADAR_PROJECT_MASTER_GUIDE.md
 __pycache__/
 .pytest_cache/
 *.pyc
