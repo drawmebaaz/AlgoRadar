@@ -9,6 +9,9 @@ from .features import SOLVE_FEATURE_COLUMNS, make_problem_feature_row
 from .models import bucket_probability, predict_solve_probability
 from .semantic import normalize, tag_similarity_score
 
+TAG_COSINE_WEIGHT = 0.12
+RATING_FIT_WEIGHT = 0.14
+
 
 def recommend_problems(
     problems: pd.DataFrame,
@@ -47,6 +50,10 @@ def recommend_problems(
     candidate["probability_bucket"] = candidate["bucket"]
     candidate["rating_distance"] = (candidate["rating"] - float(profile.get("current_rating", 1200))).abs()
     candidate["tag_similarity"] = candidate["tags"].apply(lambda tags: _weighted_tag_score(tags, target_weights))
+    user_tag_vector = build_user_solved_tag_vector(submissions)
+    user_rating = float(profile.get("current_rating", 1200) or 1200)
+    candidate["tag_cosine_similarity"] = candidate["tags"].apply(lambda tags: tag_vector_cosine_similarity(tags, user_tag_vector))
+    candidate["rating_fit_score"] = candidate["rating"].apply(lambda rating: gaussian_rating_fit(rating, user_rating))
     candidate["tag_solved_count"] = feature_frame["tag_solved_count"].to_numpy()
     candidate["tag_ceiling_gap"] = feature_frame["tag_max_rating_solved"].to_numpy() - candidate["rating"].astype(float)
     candidate["rating_confidence"] = feature_frame["rating_confidence"].to_numpy()
@@ -64,6 +71,8 @@ def recommend_problems(
         + 0.32 * candidate["ceiling_score"]
         + 0.22 * candidate["evidence_score"]
         + 0.18 * quality_score
+        + TAG_COSINE_WEIGHT * candidate["tag_cosine_similarity"]
+        + RATING_FIT_WEIGHT * candidate["rating_fit_score"]
         - 0.00028 * candidate["rating_distance"]
     )
     candidate["rank_score"] = candidate["learning_value"] + candidate["solve_probability"] * 0.16
@@ -152,6 +161,8 @@ def _pick_bucket(
                 filler_pool["bucket_fit"] * 0.78
                 + filler_pool["rank_score"] * 0.28
                 + filler_pool["tag_similarity"] * 0.18
+                + filler_pool.get("tag_cosine_similarity", 0) * 0.08
+                + filler_pool.get("rating_fit_score", 0) * 0.08
             )
             filler = _diversified_head(filler_pool.sort_values(["fallback_score", "rank_score"], ascending=False), count - len(picked))
             picked = pd.concat([picked, filler], ignore_index=True)
@@ -189,6 +200,55 @@ def _infer_recent_failures(tags: list[str], tag_stats: pd.DataFrame) -> float:
     lookup = tag_stats.set_index("tag")["recent_failures"].to_dict()
     values = [float(lookup.get(tag, 0.0) or 0.0) for tag in tags]
     return float(np.mean(values)) if values else 0.0
+
+
+def build_user_solved_tag_vector(submissions: pd.DataFrame) -> dict[str, float]:
+    if submissions is None or submissions.empty or "tags" not in submissions.columns:
+        return {}
+
+    frame = submissions.copy()
+    if "is_accepted" in frame.columns:
+        frame = frame[frame["is_accepted"]]
+    if "problem_id" in frame.columns:
+        frame = frame.drop_duplicates("problem_id")
+    if frame.empty:
+        return {}
+
+    counts: dict[str, float] = {}
+    for tags in frame["tags"].tolist():
+        for tag in _clean_tags(tags):
+            counts[tag] = counts.get(tag, 0.0) + 1.0
+
+    norm = float(np.sqrt(sum(value * value for value in counts.values())))
+    if norm <= 0:
+        return {}
+    return {tag: value / norm for tag, value in counts.items()}
+
+
+def tag_vector_cosine_similarity(problem_tags: Any, user_tag_vector: dict[str, float] | None) -> float:
+    tags = set(_clean_tags(problem_tags))
+    if not tags or not user_tag_vector:
+        return 0.0
+
+    problem_norm = float(np.sqrt(len(tags)))
+    if problem_norm <= 0:
+        return 0.0
+    dot = sum(float(user_tag_vector.get(tag, 0.0) or 0.0) for tag in tags)
+    return float(np.clip(dot / problem_norm, 0.0, 1.0))
+
+
+def gaussian_rating_fit(problem_rating: Any, user_rating: Any) -> float:
+    rating = pd.to_numeric(pd.Series([problem_rating]), errors="coerce").iloc[0]
+    if pd.isna(rating):
+        return 0.0
+
+    user = pd.to_numeric(pd.Series([user_rating]), errors="coerce").iloc[0]
+    sigma = float(user) * 0.3 if pd.notna(user) and float(user) > 0 else 300.0
+    if sigma <= 0:
+        sigma = 300.0
+
+    score = np.exp(-((float(rating) - float(user if pd.notna(user) and float(user) > 0 else 1200.0)) ** 2) / (2 * sigma**2))
+    return float(np.clip(score, 0.0, 1.0))
 
 
 def _prefilter_candidates(
@@ -258,6 +318,18 @@ def _weighted_tag_score(problem_tags: list[str], target_weights: dict[str, float
     total = sum(target_weights.values()) or 1.0
     jaccard = tag_similarity_score(problem_tags, list(target_weights))
     return float(min(1.0, matched / total * 0.75 + jaccard * 0.25))
+
+
+def _clean_tags(tags: Any) -> list[str]:
+    if tags is None:
+        return []
+    if isinstance(tags, (list, tuple, set)):
+        values = tags
+    elif isinstance(tags, str):
+        values = [item.strip() for item in tags.split(",")]
+    else:
+        return []
+    return [str(tag).strip() for tag in values if str(tag).strip()]
 
 
 def _diversified_head(frame: pd.DataFrame, count: int) -> pd.DataFrame:

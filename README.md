@@ -97,11 +97,15 @@ Recommendations are then ranked using:
 
 - solve-estimate bucket fit
 - focus-tag similarity
+- tag-vector cosine similarity
+- Gaussian rating fit
 - hardest-solved ceiling gap
 - available evidence strength
-- problem popularity
+- log popularity nudge
 - difficulty confidence
 - diversity across tags and rating bands
+
+The new tag-vector cosine score is a familiarity signal: it checks whether a candidate problem uses topics the user has already solved before. It does not replace the focus-area logic, because recommendations should not become only comfort-zone practice. The Gaussian rating-fit score gives a smooth closeness signal around the user's rating, while the existing bucket logic still decides whether a problem is confidence, growth, stretch, or avoid-for-now.
 
 The result is split into platform-specific queues:
 
@@ -125,8 +129,9 @@ AlgoRadar runs this pipeline:
 8. Build solve-estimate rows from rating gap, solved depth, tag evidence, recent failures, and popularity.
 9. Apply a monotonic scorecard so harder problems do not randomly receive higher estimates.
 10. Keep same-level problems realistic instead of treating them as guaranteed solves.
-11. Rank problems into confidence, growth, and stretch queues with duplicate and diversity controls.
-12. Build a similar-problem search layer using a fast local matcher by default.
+11. Add explainable recommendation signals such as solved-tag vector similarity and Gaussian rating fit.
+12. Rank problems into confidence, growth, and stretch queues with duplicate and diversity controls.
+13. Build a similar-problem search layer using a fast local matcher by default.
 
 The app uses live Codeforces data by default. If the API is unavailable, the backend has a reproducible sample-data fallback so the pipeline can still be tested.
 
@@ -143,6 +148,8 @@ AlgoRadar avoids treating every number as equally meaningful. The main user-faci
 - **Hardest solved**: highest-rated accepted problem for a tag.
 - **Focus score**: a topic score based on low success, recent failures, and attempt volume.
 - **Solve estimate**: a practical estimate that prioritizes rating gap, solved volume, hardest solved difficulty, average solved difficulty, and the selected problem tags. Success rate is intentionally not the main signal because accepted submissions can be distorted by AI/editorial help.
+- **Topic familiarity**: a tag-vector cosine score that measures whether a recommended problem uses topics the user has already solved before. It is only a small comfort signal, not the whole recommender.
+- **Rating fit**: a Gaussian rating-closeness score that is highest near the user's rating and smoothly falls for much easier or harder problems.
 - **Rating source**: `official` means Codeforces provides the problem rating; `estimated` means AlgoRadar inferred it from problem index and solved count.
 - **LeetCode problem reference**: LeetCode has Easy/Medium/Hard labels, topic tags, acceptance stats, and a frontend problem number. It does not expose an official problem rating or the original contest slot through the public problem lookup, so AlgoRadar lets the user add an optional Q1-Q4 contest-slot reference when known.
 - **LeetCode focus areas**: coverage-based signal from public solved topic counters. LeetCode does not expose full public verdict history for every solved/failed problem.

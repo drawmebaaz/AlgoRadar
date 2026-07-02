@@ -323,6 +323,8 @@ def combined_recommendations(
                     "tags",
                     "solve_probability_pct",
                     "acceptance_rate",
+                    "tag_cosine_similarity",
+                    "rating_fit_score",
                     "rank_score",
                     "url",
                     "reason",

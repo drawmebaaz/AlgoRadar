@@ -985,12 +985,16 @@ def render_recommendations(result) -> None:
                 "tags",
                 "solve_probability_pct",
                 "tag_similarity",
+                "tag_cosine_similarity",
+                "rating_fit_score",
                 "solved_count",
                 "rank_score",
             ]
         ].copy()
         frame["tags"] = frame["tags"].apply(_format_tags)
         frame["tag_similarity"] = frame["tag_similarity"].round(2)
+        frame["tag_cosine_similarity"] = frame["tag_cosine_similarity"].round(2)
+        frame["rating_fit_score"] = frame["rating_fit_score"].round(2)
         frame["rank_score"] = frame["rank_score"].round(3)
         st.dataframe(
             frame,
@@ -1000,7 +1004,9 @@ def render_recommendations(result) -> None:
                 "open": st.column_config.LinkColumn("Open", display_text="Codeforces"),
                 "rating_source": st.column_config.TextColumn("Rating source"),
                 "solve_probability_pct": st.column_config.NumberColumn("Solve %", format="%.1f%%"),
-                "tag_similarity": st.column_config.NumberColumn("Tag fit", format="%.2f"),
+                "tag_similarity": st.column_config.NumberColumn("Focus tag fit", format="%.2f"),
+                "tag_cosine_similarity": st.column_config.NumberColumn("Topic familiarity", format="%.2f"),
+                "rating_fit_score": st.column_config.NumberColumn("Rating fit", format="%.2f"),
                 "rank_score": st.column_config.NumberColumn("Fit score", format="%.3f"),
             },
         )
@@ -1074,6 +1080,10 @@ def _show_recommendations_table(recommendations: pd.DataFrame, show_platform: bo
         frame["reason"] = frame["reason"].apply(_friendly_recommendation_reason)
     if "rank_score" in frame.columns:
         frame["rank_score"] = pd.to_numeric(frame["rank_score"], errors="coerce").round(3)
+    if "tag_cosine_similarity" in frame.columns:
+        frame["tag_cosine_similarity"] = pd.to_numeric(frame["tag_cosine_similarity"], errors="coerce").round(2)
+    if "rating_fit_score" in frame.columns:
+        frame["rating_fit_score"] = pd.to_numeric(frame["rating_fit_score"], errors="coerce").round(2)
     if "acceptance_rate" in frame.columns:
         frame["acceptance_rate"] = pd.to_numeric(frame["acceptance_rate"], errors="coerce")
     if "solve_probability_pct" in frame.columns:
@@ -1094,6 +1104,8 @@ def _show_recommendations_table(recommendations: pd.DataFrame, show_platform: bo
             "tags",
             "solve_probability_pct",
             "acceptance_rate",
+            "tag_cosine_similarity",
+            "rating_fit_score",
             "rank_score",
             "url",
             "reason",
@@ -1113,6 +1125,8 @@ def _show_recommendations_table(recommendations: pd.DataFrame, show_platform: bo
             "tags": st.column_config.TextColumn("Tags"),
             "solve_probability_pct": st.column_config.NumberColumn("Solve %", format="%.1f%%"),
             "acceptance_rate": st.column_config.NumberColumn("Accept %", format="%.1f%%"),
+            "tag_cosine_similarity": st.column_config.NumberColumn("Topic familiarity", format="%.2f"),
+            "rating_fit_score": st.column_config.NumberColumn("Rating fit", format="%.2f"),
             "rank_score": st.column_config.NumberColumn("Fit score", format="%.3f"),
             "url": st.column_config.LinkColumn("Open", display_text="Open"),
             "reason": st.column_config.TextColumn("Why"),
