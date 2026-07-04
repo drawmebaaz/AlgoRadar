@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any
 
 import numpy as np
@@ -69,6 +70,7 @@ def classify_tag(row: dict[str, Any]) -> tuple[str, str, str]:
     )
 
 
+@lru_cache(maxsize=8)
 def train_weakness_model(random_state: int = 42) -> dict[str, Any]:
     rng = np.random.default_rng(random_state)
     rows = []

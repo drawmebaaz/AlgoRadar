@@ -42,7 +42,11 @@ def recommend_problems(
     target_tags = list(target_weights)
     candidate = _prefilter_candidates(candidate, profile, target_tags, candidate_limit)
 
-    feature_rows = [make_problem_feature_row(row, profile, tag_stats) for _, row in candidate.iterrows()]
+    tag_lookup = tag_stats.set_index("tag").to_dict("index") if not tag_stats.empty else {}
+    feature_rows = [
+        make_problem_feature_row(row, profile, tag_stats, tag_lookup=tag_lookup)
+        for _, row in candidate.iterrows()
+    ]
     feature_frame = pd.DataFrame(feature_rows)
     probabilities = predict_solve_probability(solve_model_report, feature_frame[SOLVE_FEATURE_COLUMNS])
     candidate["solve_probability"] = probabilities
@@ -238,16 +242,25 @@ def tag_vector_cosine_similarity(problem_tags: Any, user_tag_vector: dict[str, f
 
 
 def gaussian_rating_fit(problem_rating: Any, user_rating: Any) -> float:
-    rating = pd.to_numeric(pd.Series([problem_rating]), errors="coerce").iloc[0]
-    if pd.isna(rating):
+    try:
+        rating = float(problem_rating)
+    except (TypeError, ValueError):
         return 0.0
 
-    user = pd.to_numeric(pd.Series([user_rating]), errors="coerce").iloc[0]
-    sigma = float(user) * 0.3 if pd.notna(user) and float(user) > 0 else 300.0
+    try:
+        user = float(user_rating)
+    except (TypeError, ValueError):
+        user = 1200.0
+    if not np.isfinite(rating):
+        return 0.0
+    if not np.isfinite(user) or user <= 0:
+        user = 1200.0
+
+    sigma = user * 0.3
     if sigma <= 0:
         sigma = 300.0
 
-    score = np.exp(-((float(rating) - float(user if pd.notna(user) and float(user) > 0 else 1200.0)) ** 2) / (2 * sigma**2))
+    score = np.exp(-((rating - user) ** 2) / (2 * sigma**2))
     return float(np.clip(score, 0.0, 1.0))
 
 

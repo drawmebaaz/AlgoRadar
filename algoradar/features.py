@@ -366,8 +366,10 @@ def make_problem_feature_row(
     profile: dict[str, Any],
     tag_stats: pd.DataFrame,
     recent_failures_override: float | None = None,
+    tag_lookup: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, float]:
-    tag_lookup = tag_stats.set_index("tag").to_dict("index") if not tag_stats.empty else {}
+    if tag_lookup is None:
+        tag_lookup = tag_stats.set_index("tag").to_dict("index") if not tag_stats.empty else {}
     tags = problem.get("tags", []) or []
     rating = float(problem.get("rating") or profile.get("current_rating", 1200))
     user_rating = float(profile.get("current_rating", 1200))

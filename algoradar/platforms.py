@@ -16,8 +16,8 @@ from .config import CACHE_DIR
 
 REQUEST_TIMEOUT_SECONDS = 8
 CACHE_MAX_AGE_SECONDS = 6 * 3600
-CATALOG_CACHE_SECONDS = 24 * 3600
-LEETCODE_PROBLEM_LIMIT = 700
+CATALOG_CACHE_SECONDS = 7 * 24 * 3600
+LEETCODE_PROBLEM_LIMIT = 400
 LEETCODE_BATCH_SIZE = 100
 CODECHEF_PROBLEM_LIMIT = 80
 
@@ -1155,8 +1155,15 @@ def _codechef_recommendations(profile: dict[str, Any], force_refresh: bool = Fal
     ]
     rows: list[pd.DataFrame] = []
     used: set[str] = set()
+    with ThreadPoolExecutor(max_workers=min(3, len(bands))) as executor:
+        fetched = {
+            bucket: executor.submit(_fetch_codechef_problems, low, high, force_refresh)
+            for bucket, low, high, _ in bands
+        }
+        band_frames = {bucket: future.result() for bucket, future in fetched.items()}
+
     for bucket, low, high, count in bands:
-        frame = _fetch_codechef_problems(low, high, force_refresh=force_refresh)
+        frame = band_frames.get(bucket, pd.DataFrame())
         if frame.empty:
             continue
         frame = frame[~frame["problem_id"].isin(used)].copy()
