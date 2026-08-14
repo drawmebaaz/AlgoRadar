@@ -389,6 +389,23 @@ git push -u origin feat/sequence-aware-ranker
 
 - Optional: verify embeddings/local MiniLM behavior before enabling in the app. Set `ALGORADAR_ALLOW_MINILM_DOWNLOAD=1` to allow runtime downloads.
 
+## Semantic Index Persistence & ANN
+
+AlgoRadar now persists semantic indices to `data/cache/` to avoid rebuilding heavy embeddings at every run. Key points:
+
+- **Where cached**: `data/cache/semantic_vectors.npy` and `data/cache/semantic_meta.pkl`. Optional Annoy index stored at `data/cache/semantic.ann` when Annoy is available.
+- **Enable MiniLM**: install `requirements-embeddings.txt` and run `scripts/verify_minilm.py` once. To allow in-app downloads set:
+
+```bash
+export ALGORADAR_ALLOW_MINILM_DOWNLOAD=1  # macOS/Linux
+setx ALGORADAR_ALLOW_MINILM_DOWNLOAD 1   # Windows (restart shell)
+```
+
+- **Annoy (optional)**: install with `pip install annoy` to get fast on-disk ANN search. If Annoy is not installed, AlgoRadar falls back to TF-IDF or brute-force cosine for similarity.
+- **Force rebuild**: delete the files under `data/cache/semantic_*` or run the app with `--refresh` options where available.
+
+This improves startup time and scales similarity searches for large catalogs.
+
 ## Update README Screenshots
 
 The README preview uses real app screenshots stored in `social_assets/`. To refresh the gallery, replace these files with new screenshots using the same filenames:
