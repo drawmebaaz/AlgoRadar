@@ -3,13 +3,19 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import requests
 
-from .config import API_TIMEOUT_SECONDS, CACHE_DIR, CODEFORCES_BASE_URL, DEFAULT_SUBMISSION_LIMIT
+from .config import (
+    API_TIMEOUT_SECONDS,
+    CACHE_DIR,
+    CODEFORCES_BASE_URL,
+    DEFAULT_SUBMISSION_LIMIT,
+)
 from .sample_data import make_sample_bundle
 
 

@@ -4,15 +4,17 @@ import json
 import math
 import re
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import pandas as pd
 import requests
 
 from .config import CACHE_DIR
+from .semantic import detect_isomorphic_twins
 
 REQUEST_TIMEOUT_SECONDS = 8
 CACHE_MAX_AGE_SECONDS = 6 * 3600
@@ -90,12 +92,13 @@ def analyze_external_platforms(
             for key, (fn, handle) in tasks.items()
         }
         for key, future in futures.items():
-            try:
-                results[key] = future.result()
-            except Exception as exc:
+            exc = future.exception()
+            if exc is not None:
                 platform = "LeetCode" if key == "leetcode" else "CodeChef"
                 handle = tasks[key][1]
                 results[key] = _empty_analysis(platform, handle, "error", str(exc))
+            else:
+                results[key] = future.result()
     return results
 
 
@@ -141,7 +144,7 @@ def analyze_leetcode(username: str, force_refresh: bool = False, include_recomme
                 "recommendations": "public problem catalog; solved filter limited to recent accepted submissions",
             },
         )
-    except Exception as exc:
+    except (requests.RequestException, json.JSONDecodeError, OSError) as exc:
         return _empty_analysis("LeetCode", username, "error", str(exc))
 
 
@@ -181,7 +184,7 @@ def analyze_codechef(handle: str, force_refresh: bool = False, include_recommend
                 "tags": "not exposed in public solved-profile data",
             },
         )
-    except Exception as exc:
+    except (requests.RequestException, json.JSONDecodeError, OSError) as exc:
         return _empty_analysis("CodeChef", handle, "error", str(exc))
 
 
@@ -279,7 +282,7 @@ def build_combined_overview(
 
     ok_rows = platform_rows[platform_rows["status"] == "ok"] if not platform_rows.empty else platform_rows
     total_solved = int(ok_rows["solved"].sum()) if not ok_rows.empty else 0
-    platforms_connected = int(len(ok_rows)) if not ok_rows.empty else 0
+    platforms_connected = len(ok_rows) if not ok_rows.empty else 0
     contest_entries = int(ok_rows["contests"].sum()) if not ok_rows.empty else 0
     attention_platform = _attention_platform(platform_rows, focus)
 
@@ -287,7 +290,7 @@ def build_combined_overview(
         "total_solved": total_solved,
         "platforms_connected": platforms_connected,
         "contest_entries": contest_entries,
-        "focus_areas": int(len(focus)),
+        "focus_areas": len(focus),
         "attention_platform": attention_platform,
     }
     return {
@@ -849,7 +852,7 @@ def _leetcode_contest_trend(payload: dict[str, Any]) -> pd.DataFrame:
         if not item.get("attended"):
             continue
         rating = float(item.get("rating", 0) or 0)
-        delta = 0 if last_rating is None else int(round(rating - last_rating))
+        delta = 0 if last_rating is None else round(rating - last_rating)
         contest = item.get("contest") or {}
         total = int(item.get("totalProblems", 0) or 0)
         solved = int(item.get("problemsSolved", 0) or 0)
@@ -923,7 +926,7 @@ def _safe_leetcode_recommendations(
 ) -> pd.DataFrame:
     try:
         return _leetcode_recommendations(profile, weakness, activity, force_refresh)
-    except Exception:
+    except (RuntimeError, ValueError):
         return pd.DataFrame(
             columns=[
                 "platform",
@@ -990,7 +993,7 @@ def _leetcode_recommendations(
         subset["platform"] = "LeetCode"
         subset["bucket"] = bucket
         subset["solve_probability_pct"] = subset.apply(
-            lambda row: _leetcode_solve_probability(row, bucket, total_solved, target_rank),
+            lambda row, bucket=bucket: _leetcode_solve_probability(row, bucket, total_solved, target_rank),
             axis=1,
         )
         subset["reason"] = subset["tags"].apply(lambda tags: _tag_reason(tags, "Good LeetCode practice for"))
@@ -1128,7 +1131,7 @@ def _codechef_weakness(profile: dict[str, Any], contest_trend: pd.DataFrame) -> 
 def _safe_codechef_recommendations(profile: dict[str, Any], force_refresh: bool) -> pd.DataFrame:
     try:
         return _codechef_recommendations(profile, force_refresh=force_refresh)
-    except Exception:
+    except (RuntimeError, ValueError):
         return pd.DataFrame(
             columns=[
                 "platform",
@@ -1171,7 +1174,7 @@ def _codechef_recommendations(profile: dict[str, Any], force_refresh: bool = Fal
             continue
         frame["bucket"] = bucket
         frame["native_rating_gap"] = frame["difficulty"] - rating
-        frame["solve_probability_pct"] = frame.apply(lambda row: _codechef_solve_probability(row, rating, profile, bucket), axis=1)
+        frame["solve_probability_pct"] = frame.apply(lambda row, bucket=bucket: _codechef_solve_probability(row, rating, profile, bucket), axis=1)
         frame["target_gap"] = {"confidence": -180, "growth": 110, "stretch": 360}[bucket]
         frame["gap_to_target"] = (frame["native_rating_gap"] - frame["target_gap"]).abs()
         popularity = frame["solved_count"].fillna(0).apply(lambda value: math.log1p(value) / math.log1p(7000))
@@ -1208,7 +1211,7 @@ def _codechef_recommendations(profile: dict[str, Any], force_refresh: bool = Fal
 
 
 def _extract_codechef_rating_history(html: str) -> list[dict[str, Any]]:
-    match = re.search(r"all_rating\s*=\s*(\[.*?\]);", html, flags=re.S)
+    match = re.search(r"all_rating\s*=\s*(\[.*?]);", html, flags=re.DOTALL)
     if not match:
         return []
     try:
@@ -1275,6 +1278,18 @@ def _platform_summary_row(analysis: PlatformAnalysis) -> dict[str, Any]:
     }
 
 
+def isomorphic_twin_candidates(candidates: pd.DataFrame, solved_problems: pd.DataFrame, threshold: float = 0.88) -> set:
+    """Return a set of candidate `problem_id`s that are semantically isomorphic to solved problems.
+
+    Wrapper around `semantic.detect_isomorphic_twins` to provide a stable API used by recommender.
+    """
+    try:
+        flagged = detect_isomorphic_twins(candidates, solved_problems, threshold=threshold)
+        return set(flagged)
+    except (RuntimeError, ValueError):
+        return set()
+
+
 def _attention_platform(platform_rows: pd.DataFrame, focus: pd.DataFrame) -> str:
     if not focus.empty:
         return str(focus.sort_values("priority", ascending=False).iloc[0]["platform"])
@@ -1321,7 +1336,7 @@ def _safe_key(value: str) -> str:
 
 def _first_int(text: str, patterns: list[str]) -> int:
     for pattern in patterns:
-        match = re.search(pattern, text, flags=re.I | re.S)
+        match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
         if match:
             return int(str(match.group(1)).replace(",", ""))
     return 0
@@ -1329,7 +1344,7 @@ def _first_int(text: str, patterns: list[str]) -> int:
 
 def _first_text(text: str, patterns: list[str]) -> str:
     for pattern in patterns:
-        match = re.search(pattern, text, flags=re.I | re.S)
+        match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
         if match:
             return re.sub(r"\s+", " ", match.group(1)).strip()
     return ""
@@ -1341,19 +1356,19 @@ def _looks_like_missing_codechef_profile(html: str) -> bool:
 
 
 def _codechef_star_count(html: str) -> int:
-    match = re.search(r'class="rating-star">(.*?)</div>', html, flags=re.I | re.S)
+    match = re.search(r'class="rating-star">(.*?)</div>', html, flags=re.IGNORECASE | re.DOTALL)
     if not match:
         return 0
     block = match.group(1)
-    return max(block.count("&#9733;"), block.count("*"), len(re.findall(r"<span", block, flags=re.I)))
+    return max(block.count("&#9733;"), block.count("*"), len(re.findall(r"<span", block, flags=re.IGNORECASE)))
 
 
 def _codechef_section_counts(html: str) -> dict[str, int]:
-    section_match = re.search(r'<section class="rating-data-section problems-solved">(.*?)</section>', html, flags=re.I | re.S)
+    section_match = re.search(r'<section class="rating-data-section problems-solved">(.*?)</section>', html, flags=re.IGNORECASE | re.DOTALL)
     section = section_match.group(1) if section_match else html
     counts: dict[str, int] = {}
     for label in ["Learning Paths", "Practice Paths", "Contests"]:
-        match = re.search(rf"<h3>\s*{re.escape(label)}\s*\((\d+)\)", section, flags=re.I | re.S)
+        match = re.search(rf"<h3>\s*{re.escape(label)}\s*\((\d+)\)", section, flags=re.IGNORECASE | re.DOTALL)
         if match:
             counts[label] = int(match.group(1))
     return counts

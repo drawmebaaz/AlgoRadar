@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from algoradar.features import make_problem_feature_row, problemset_to_frame, submissions_to_frame, tag_feature_frame
+from algoradar.features import (
+    make_problem_feature_row,
+    problemset_to_frame,
+    submissions_to_frame,
+    tag_feature_frame,
+)
 from algoradar.models import train_contest_score_predictor
 from algoradar.pipeline import run_analysis
 from algoradar.recommender import score_custom_problem

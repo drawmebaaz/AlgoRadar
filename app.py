@@ -6,7 +6,11 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from algoradar.platforms import analyze_external_platforms, build_combined_overview, lookup_leetcode_problem
+from algoradar.platforms import (
+    analyze_external_platforms,
+    build_combined_overview,
+    lookup_leetcode_problem,
+)
 from algoradar.solve_probability import (
     available_probability_tags,
     score_saved_profile_problem,
@@ -283,7 +287,7 @@ def render_profile(result) -> None:
                     y=result.contest_trend["rating"],
                     mode="lines+markers",
                     name="Rating",
-                    line=dict(color="#4fce8a", width=2),
+                    line={"color": "#4fce8a", "width": 2},
                 )
             )
             fig.add_trace(
@@ -296,7 +300,7 @@ def render_profile(result) -> None:
                     yaxis="y2",
                 )
             )
-            fig.update_layout(yaxis2=dict(overlaying="y", side="right", showgrid=False), **chart_layout())
+            fig.update_layout(yaxis2={"overlaying": "y", "side": "right", "showgrid": False}, **chart_layout())
             st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
 
     with right:
@@ -310,7 +314,7 @@ def render_profile(result) -> None:
                     labels=verdicts["verdict"],
                     values=verdicts["count"],
                     hole=0.58,
-                    marker=dict(colors=palette()),
+                    marker={"colors": palette()},
                 )
             )
             fig.update_layout(**chart_layout(height=360))
@@ -329,11 +333,11 @@ def render_profile(result) -> None:
                     y=frame["accuracy"],
                     mode="lines+markers",
                     name="Success %",
-                    line=dict(color="#d9a441", width=2),
+                    line={"color": "#d9a441", "width": 2},
                     yaxis="y2",
                 )
             )
-            fig.update_layout(yaxis2=dict(overlaying="y", side="right", range=[0, 100], showgrid=False), **chart_layout())
+            fig.update_layout(yaxis2={"overlaying": "y", "side": "right", "range": [0, 100], "showgrid": False}, **chart_layout())
             st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
         else:
             st.info("No rating data available.")
@@ -476,11 +480,11 @@ def render_leetcode_detail(analysis) -> None:
                     y=difficulty["accuracy"],
                     mode="lines+markers",
                     name="Success %",
-                    line=dict(color="#d9a441", width=2),
+                    line={"color": "#d9a441", "width": 2},
                     yaxis="y2",
                 )
             )
-            fig.update_layout(yaxis2=dict(overlaying="y", side="right", range=[0, 100], showgrid=False), **chart_layout())
+            fig.update_layout(yaxis2={"overlaying": "y", "side": "right", "range": [0, 100], "showgrid": False}, **chart_layout())
             st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
 
     with right:
@@ -490,9 +494,9 @@ def render_leetcode_detail(analysis) -> None:
             st.info("No public LeetCode contest history found.")
         else:
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=trend["contest"], y=trend["rating"], mode="lines+markers", name="Rating", line=dict(color="#7aa7e8")))
+            fig.add_trace(go.Scatter(x=trend["contest"], y=trend["rating"], mode="lines+markers", name="Rating", line={"color": "#7aa7e8"}))
             fig.add_bar(x=trend["contest"], y=trend["delta"], name="Delta", marker_color="#242b35", yaxis="y2")
-            fig.update_layout(yaxis2=dict(overlaying="y", side="right", showgrid=False), **chart_layout())
+            fig.update_layout(yaxis2={"overlaying": "y", "side": "right", "showgrid": False}, **chart_layout())
             st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
 
     left, right = st.columns([1.2, 1])
@@ -543,9 +547,9 @@ def render_codechef_detail(analysis) -> None:
             st.info("No CodeChef rating history found.")
         else:
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=trend["contest"], y=trend["rating"], mode="lines+markers", name="Rating", line=dict(color="#4fce8a")))
+            fig.add_trace(go.Scatter(x=trend["contest"], y=trend["rating"], mode="lines+markers", name="Rating", line={"color": "#4fce8a"}))
             fig.add_bar(x=trend["contest"], y=trend["delta"], name="Delta", marker_color="#7aa7e8", opacity=0.42, yaxis="y2")
-            fig.update_layout(yaxis2=dict(overlaying="y", side="right", showgrid=False), **chart_layout(height=430))
+            fig.update_layout(yaxis2={"overlaying": "y", "side": "right", "showgrid": False}, **chart_layout(height=430))
             st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
 
     with right:
@@ -786,7 +790,7 @@ def _leetcode_probability_inputs(tags_options: list[str], default_tags: list[str
     if slug_or_url.strip():
         try:
             problem = cached_leetcode_problem_lookup(slug_or_url.strip(), force_refresh)
-        except Exception as exc:
+        except (RuntimeError, ValueError, KeyError) as exc:
             problem = {"status": "error", "error": str(exc)}
         if problem.get("status") == "ok":
             fetched_tags = list(problem.get("tags", []) or [])
@@ -1054,18 +1058,18 @@ def render_progress(result) -> None:
     panel_title("Progress tracking", "weekly solve volume and success rate")
     fig = go.Figure()
     fig.add_bar(x=progress["week"], y=progress["attempts"], name="Attempts", marker_color="#242b35")
-    fig.add_trace(go.Scatter(x=progress["week"], y=progress["solved"], mode="lines+markers", name="Solved", line=dict(color="#4fce8a")))
+    fig.add_trace(go.Scatter(x=progress["week"], y=progress["solved"], mode="lines+markers", name="Solved", line={"color": "#4fce8a"}))
     fig.add_trace(
         go.Scatter(
             x=progress["week"],
             y=progress["accuracy"],
             mode="lines+markers",
             name="Success %",
-            line=dict(color="#d9a441"),
+            line={"color": "#d9a441"},
             yaxis="y2",
         )
     )
-    fig.update_layout(yaxis2=dict(overlaying="y", side="right", range=[0, 100], showgrid=False), **chart_layout(height=460))
+    fig.update_layout(yaxis2={"overlaying": "y", "side": "right", "range": [0, 100], "showgrid": False}, **chart_layout(height=460))
     st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
 
 

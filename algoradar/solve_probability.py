@@ -63,7 +63,7 @@ def _bucket_probability(probability: float) -> str:
 
 def score_saved_profile_problem(
     platform: str,
-    target_rating: int | float | None,
+    target_rating: float | None,
     tags: list[str],
     popularity: int,
     codeforces_result: Any | None,
@@ -204,7 +204,7 @@ def score_saved_profile_problem(
 
 def native_to_cf_equivalent(
     platform: str,
-    native_rating: int | float | None = None,
+    native_rating: float | None = None,
     leetcode_difficulty: str = "",
     leetcode_contest_slot: str = "Unknown",
 ) -> dict[str, Any]:
@@ -214,7 +214,7 @@ def native_to_cf_equivalent(
         row = _nearest_calibration_row(target, "cf_problem_rating")
         return _calibration_result(
             platform=platform,
-            native_target=str(int(round(target))),
+            native_target=str(round(target)),
             cf_equivalent=target,
             source="Codeforces official/estimated rating",
             row=row,
@@ -227,7 +227,7 @@ def native_to_cf_equivalent(
         row = _nearest_calibration_row(native, "codechef_equiv_mid")
         return _calibration_result(
             platform=platform,
-            native_target=f"CodeChef {int(round(native))}",
+            native_target=f"CodeChef {round(native)}",
             cf_equivalent=cf_equivalent,
             source="CodeChef rating calibrated from mapping CSV",
             row=row,
@@ -241,7 +241,7 @@ def native_to_cf_equivalent(
             row = _nearest_calibration_row(native, "leetcode_zerotrac_equiv_mid")
             return _calibration_result(
                 platform=platform,
-                native_target=f"LeetCode/Zerotrac {int(round(native))}",
+                native_target=f"LeetCode/Zerotrac {round(native)}",
                 cf_equivalent=cf_equivalent,
                 source="LeetCode numeric difficulty calibrated from mapping CSV",
                 row=row,
@@ -273,7 +273,7 @@ def native_to_cf_equivalent(
     row = _nearest_calibration_row(target, "cf_problem_rating")
     return _calibration_result(
         platform=platform,
-        native_target=str(int(round(target))),
+        native_target=str(round(target)),
         cf_equivalent=target,
         source="Fallback shared difficulty rating",
         row=row,
@@ -282,7 +282,7 @@ def native_to_cf_equivalent(
 
 def target_rating_from_difficulty(platform: str, difficulty: str, fallback_rating: int = 1600) -> int:
     if _platform_key(platform) == "leetcode":
-        return int(round(native_to_cf_equivalent("LeetCode", leetcode_difficulty=difficulty)["cf_equivalent"]))
+        return round(native_to_cf_equivalent("LeetCode", leetcode_difficulty=difficulty)["cf_equivalent"])
     return int(fallback_rating)
 
 
@@ -495,7 +495,7 @@ def _calibration_result(
     return {
         "platform": platform,
         "native_target": native_target,
-        "cf_equivalent": int(round(_clip_rating(cf_equivalent, 400, 3500))),
+        "cf_equivalent": round(_clip_rating(cf_equivalent, 400, 3500)),
         "source": source,
         "confidence": str(row.get("confidence", "medium") or "medium"),
         "training_weight": float(row.get("recommended_training_weight", 0.5) or 0.5),

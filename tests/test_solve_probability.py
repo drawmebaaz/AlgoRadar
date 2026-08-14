@@ -5,7 +5,10 @@ from types import SimpleNamespace
 import pandas as pd
 
 from algoradar.platforms import PlatformAnalysis
-from algoradar.solve_probability import native_to_cf_equivalent, score_saved_profile_problem
+from algoradar.solve_probability import (
+    native_to_cf_equivalent,
+    score_saved_profile_problem,
+)
 
 
 def test_cross_platform_probability_decreases_with_rating() -> None:

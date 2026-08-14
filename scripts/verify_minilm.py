@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import time
 
-
 MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
 

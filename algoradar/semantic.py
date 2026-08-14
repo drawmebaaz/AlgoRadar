@@ -50,7 +50,7 @@ def build_semantic_index(problems: pd.DataFrame, prefer_transformer: bool = True
                 embeddings=embeddings,
                 model=model,
             )
-        except Exception:
+        except (ImportError, RuntimeError, OSError):
             pass
 
     vectorizer = _build_vectorizer(texts, max_features=6000)
@@ -154,3 +154,54 @@ def _cosine_scores(query_embedding: np.ndarray, embeddings: np.ndarray) -> np.nd
     query_norm[query_norm == 0] = 1.0
     row_norms[row_norms == 0] = 1.0
     return ((query_embedding / query_norm) @ (embeddings / row_norms).T).ravel()
+
+
+def detect_isomorphic_twins(candidates: pd.DataFrame, solved_problems: pd.DataFrame, prefer_transformer: bool = True, threshold: float = 0.88) -> list[str]:
+    """Return a list of candidate problem_ids that semantically match a solved Codeforces problem above threshold.
+
+    This builds an index from the solved_problems and compares candidate texts. If a candidate has a
+    cosine similarity greater than `threshold` to any solved problem (assumed Codeforces when platform
+    is not explicit), it is flagged as an isomorphic twin.
+    """
+    if candidates is None or candidates.empty or solved_problems is None or solved_problems.empty:
+        return []
+
+    # build an index of solved problems (anchor set)
+    solved_index = build_semantic_index(solved_problems, prefer_transformer=prefer_transformer)
+    if not solved_index.problem_ids:
+        return []
+
+    # prepare candidate texts (only check candidates that look like LeetCode if platform column exists)
+    def _is_leetcode_row(row: pd.Series) -> bool:
+        if "platform" in row.index:
+            return str(row.get("platform", "")).lower() == "leetcode"
+        # fallback: if problem_id is non-numeric or slug-like, assume leetcode (best-effort)
+        pid = str(row.get("problem_id", ""))
+        return not pid.isdigit()
+
+    leetcode_candidates = candidates[candidates.apply(_is_leetcode_row, axis=1)]
+    if leetcode_candidates.empty:
+        return []
+
+    texts = [build_problem_text(row) for _, row in leetcode_candidates.iterrows()]
+    # encode candidate texts with the same method used for the solved index
+    if solved_index.method.startswith("sentence-transformers") and solved_index.model is not None:
+        try:
+            cand_emb = solved_index.model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+        except (AttributeError, RuntimeError, TypeError):
+            cand_emb = _vectorize_texts(texts, solved_index.vectorizer)
+    else:
+        cand_emb = _vectorize_texts(texts, solved_index.vectorizer)
+
+    # compute pairwise similarities (candidate x solved)
+    sims = []
+    for i in range(len(texts)):
+        scores = _cosine_scores(np.asarray(cand_emb[i]), np.asarray(solved_index.embeddings))
+        max_score = float(np.max(scores)) if scores.size else 0.0
+        sims.append(max_score)
+
+    flagged: list[str] = []
+    for (idx, row), score in zip(leetcode_candidates.iterrows(), sims):
+        if score >= threshold:
+            flagged.append(str(row.get("problem_id")))
+    return flagged

@@ -7,7 +7,10 @@ import pandas as pd
 
 from .features import SOLVE_FEATURE_COLUMNS, make_problem_feature_row
 from .models import bucket_probability, predict_solve_probability
-from .semantic import normalize, tag_similarity_score
+from .semantic import detect_isomorphic_twins, normalize, tag_similarity_score
+
+# Simple prerequisite DAG stub (can be extended)
+PREREQ_DAG = {"Tree DP": ["DFS", "1D DP"]}
 
 TAG_COSINE_WEIGHT = 0.12
 RATING_FIT_WEIGHT = 0.14
@@ -43,20 +46,74 @@ def recommend_problems(
     candidate = _prefilter_candidates(candidate, profile, target_tags, candidate_limit)
 
     tag_lookup = tag_stats.set_index("tag").to_dict("index") if not tag_stats.empty else {}
+
+    # Session context: find common tag among last 3 attempted tags
+    session_multiplier = 1.0
+    session_tag = None
+    if not submissions.empty:
+        if "created_at" in submissions.columns:
+            recent_tags = submissions.sort_values("created_at", ascending=False).explode("tags")["tags"].dropna().astype(str)
+        else:
+            recent_tags = submissions.explode("tags")["tags"].dropna().astype(str)
+        last3 = recent_tags.head(6).tolist()
+        from collections import Counter
+
+        if last3:
+            most_common, count = Counter(last3).most_common(1)[0]
+            if count >= 2:
+                session_tag = most_common
+                session_multiplier = 1.15
+
+    # Precompute per-candidate decayed_tag_mastery and avg fuzzy struggle from tag_stats
+    def _decayed_mastery_for_tags(tags: list[str]) -> float:
+        values = [tag_lookup.get(tag, {}).get("accuracy", 0.0) / 100.0 for tag in tags]
+        return float(np.mean(values)) if values else 0.0
+
+    def _avg_fuzzy_struggle_for_tags(tags: list[str]) -> float:
+        values = [tag_lookup.get(tag, {}).get("avg_fuzzy_struggle", 0.0) for tag in tags]
+        return float(np.mean(values)) if values else 0.0
+
+    candidate["decayed_tag_mastery"] = candidate["tags"].apply(lambda tags: _decayed_mastery_for_tags(tags or []))
+    candidate["average_fuzzy_struggle_on_tag"] = candidate["tags"].apply(lambda tags: _avg_fuzzy_struggle_for_tags(tags or []))
+
+    # Prerequisite fit score per candidate
+    def _prereq_fit(tags: list[str]) -> float:
+        scores: list[float] = []
+        for tag in tags:
+            prereqs = PREREQ_DAG.get(tag, [])
+            if not prereqs:
+                continue
+            prereq_vals = [tag_lookup.get(p, {}).get("accuracy", 0.0) / 100.0 for p in prereqs]
+            if prereq_vals:
+                scores.append(float(np.mean(prereq_vals)))
+        return float(np.mean(scores)) if scores else 1.0
+
+    candidate["prereq_fit_score"] = candidate["tags"].apply(lambda tags: _prereq_fit(tags or []))
+
+    # compute user tag vector and per-problem tag-cosine similarity (used for both ranking and as a feature)
+    user_tag_vector = build_user_solved_tag_vector(submissions)
+    candidate["tag_cosine_similarity"] = candidate["tags"].apply(lambda tags: tag_vector_cosine_similarity(tags, user_tag_vector))
+
+    # Build feature rows and ensure the new columns land in the feature frame
     feature_rows = [
         make_problem_feature_row(row, profile, tag_stats, tag_lookup=tag_lookup)
         for _, row in candidate.iterrows()
     ]
     feature_frame = pd.DataFrame(feature_rows)
+    # overwrite / inject the sequence-aware features computed above
+    for col in ["decayed_tag_mastery", "prereq_fit_score", "average_fuzzy_struggle_on_tag"]:
+        if col in candidate.columns:
+            feature_frame[col] = candidate[col].to_numpy()
+    # inject cosine similarity feature from tag-based cosine
+    feature_frame["cosine_similarity"] = candidate.get("tag_cosine_similarity", pd.Series(0.0, index=feature_frame.index)).to_numpy()
+
     probabilities = predict_solve_probability(solve_model_report, feature_frame[SOLVE_FEATURE_COLUMNS])
     candidate["solve_probability"] = probabilities
     candidate["bucket"] = [bucket_probability(probability) for probability in probabilities]
     candidate["probability_bucket"] = candidate["bucket"]
     candidate["rating_distance"] = (candidate["rating"] - float(profile.get("current_rating", 1200))).abs()
     candidate["tag_similarity"] = candidate["tags"].apply(lambda tags: _weighted_tag_score(tags, target_weights))
-    user_tag_vector = build_user_solved_tag_vector(submissions)
     user_rating = float(profile.get("current_rating", 1200) or 1200)
-    candidate["tag_cosine_similarity"] = candidate["tags"].apply(lambda tags: tag_vector_cosine_similarity(tags, user_tag_vector))
     candidate["rating_fit_score"] = candidate["rating"].apply(lambda rating: gaussian_rating_fit(rating, user_rating))
     candidate["tag_solved_count"] = feature_frame["tag_solved_count"].to_numpy()
     candidate["tag_ceiling_gap"] = feature_frame["tag_max_rating_solved"].to_numpy() - candidate["rating"].astype(float)
@@ -79,15 +136,30 @@ def recommend_problems(
         + RATING_FIT_WEIGHT * candidate["rating_fit_score"]
         - 0.00028 * candidate["rating_distance"]
     )
+    # Apply session intent multiplier to matching-tag candidates
+    if session_tag:
+        candidate.loc[candidate["tags"].apply(lambda tags: session_tag in (tags or [])), "learning_value"] *= session_multiplier
+
+    # Apply prerequisite penalty for candidates failing prereq fit
+    prereq_threshold = 0.65
+    mask_prereq = candidate["prereq_fit_score"] < prereq_threshold
+    candidate.loc[mask_prereq, "learning_value"] *= 0.8
     candidate["rank_score"] = candidate["learning_value"] + candidate["solve_probability"] * 0.16
+
+    # Cross-platform isomorphic twin detection: drop LeetCode twins from growth/stretch
+    try:
+        solved_problems = problems[problems["problem_id"].isin(list(solved_ids))]
+        twin_set = set(detect_isomorphic_twins(candidate, solved_problems))
+    except (RuntimeError, ValueError):
+        twin_set = set()
 
     selected_ids: set[str] = set()
     user_rating = float(profile.get("current_rating", 1200) or 1200)
     confidence = _pick_bucket(candidate, "confidence", confidence_count, sort_by=["solve_probability", "rank_score"], excluded_ids=selected_ids, user_rating=user_rating)
     selected_ids.update(confidence["problem_id"].astype(str).tolist())
-    growth = _pick_bucket(candidate, "growth", growth_count, sort_by=["rank_score", "tag_similarity"], excluded_ids=selected_ids, user_rating=user_rating)
+    growth = _pick_bucket(candidate, "growth", growth_count, sort_by=["rank_score", "tag_similarity"], excluded_ids=selected_ids.union(twin_set), user_rating=user_rating)
     selected_ids.update(growth["problem_id"].astype(str).tolist())
-    stretch = _pick_bucket(candidate, "stretch", stretch_count, sort_by=["rank_score", "tag_similarity"], excluded_ids=selected_ids, user_rating=user_rating)
+    stretch = _pick_bucket(candidate, "stretch", stretch_count, sort_by=["rank_score", "tag_similarity"], excluded_ids=selected_ids.union(twin_set), user_rating=user_rating)
 
     recommendations = pd.concat([confidence, growth, stretch], ignore_index=True)
     if recommendations.empty:

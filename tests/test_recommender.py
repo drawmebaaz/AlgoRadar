@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import pytest
 import pandas as pd
+import pytest
 
 from algoradar.features import SOLVE_FEATURE_COLUMNS
 from algoradar.recommender import (

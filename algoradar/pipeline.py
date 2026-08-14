@@ -21,7 +21,11 @@ from .features import (
 )
 from .models import train_contest_score_predictor, train_solve_probability_model
 from .sample_data import make_sample_bundle
-from .weakness import classify_weakness, predict_weakness_with_model, train_weakness_model
+from .weakness import (
+    classify_weakness,
+    predict_weakness_with_model,
+    train_weakness_model,
+)
 
 
 @dataclass

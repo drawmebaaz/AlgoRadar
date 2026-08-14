@@ -61,7 +61,7 @@ def train_solve_probability_model(examples: pd.DataFrame, random_state: int = 42
         "metrics": {"monotonic_scorecard": _binary_metrics(y, predictions)},
         "features": SOLVE_FEATURE_COLUMNS,
         "feature_importance": _scorecard_feature_importance(),
-        "training_rows": int(len(frame)),
+        "training_rows": len(frame),
     }
 
 
@@ -274,39 +274,38 @@ def _default_feature_value(column: str, frame: pd.DataFrame) -> float:
 def _monotonic_solve_probabilities(features: pd.DataFrame) -> np.ndarray:
     frame = features.copy()
     rating_gap = frame["problem_rating"].astype(float) - frame["user_rating"].astype(float)
-    tag_accuracy = frame["tag_accuracy"].astype(float).clip(0, 100)
     attempts = frame["attempts_on_tag"].astype(float).clip(lower=0)
-    tag_solved = frame["tag_solved_count"].astype(float).clip(lower=0)
-    tag_avg_rating = frame["tag_avg_rating_solved"].astype(float).clip(lower=0)
     tag_max_rating = frame["tag_max_rating_solved"].astype(float).clip(lower=0)
-    recent_failures = frame["recent_failures"].astype(float).clip(lower=0)
     popularity = frame["popularity_log"].astype(float).clip(lower=0)
-    tag_count = frame["tag_count"].astype(float).clip(lower=0)
-    recent_accuracy = frame["recent_accuracy"].astype(float).clip(0, 100)
     solved_volume = frame["solved_volume_log"].astype(float).clip(lower=0)
-    rating_confidence = frame["rating_confidence"].astype(float).clip(0.4, 1.0)
-
     ceiling_gap = tag_max_rating - frame["problem_rating"].astype(float)
-    avg_gap = tag_avg_rating - frame["problem_rating"].astype(float)
-    volume_strength = np.log1p(tag_solved) / 4.6
-    ceiling_strength = 1 / (1 + np.exp(-(ceiling_gap + 80) / 260))
-    avg_strength = 1 / (1 + np.exp(-(avg_gap + 80) / 340))
+
+    # Sequence-aware fields
+    decayed_tag_mastery = frame.get("decayed_tag_mastery", pd.Series(0.0, index=frame.index)).astype(float).clip(0, 1)
+    prereq_fit = frame.get("prereq_fit_score", pd.Series(1.0, index=frame.index)).astype(float).clip(0, 1)
+    avg_fuzzy_struggle = frame.get("average_fuzzy_struggle_on_tag", pd.Series(0.0, index=frame.index)).astype(float).clip(0, 1)
+    cosine_sim = frame.get("cosine_similarity", pd.Series(0.0, index=frame.index)).astype(float).clip(0, 1)
+
+    # coefficients for logit -- chosen conservatively; tuneable
+    base_bias = 0.25
+    scale_factor = 275.0
+    w1 = 0.36
+    w2 = 0.28
+    w3 = 0.44
+    w4 = 0.14
 
     logit = (
-        -0.35
-        - rating_gap / 275
-        + volume_strength * 0.55
-        + ceiling_strength * 0.52
-        + avg_strength * 0.24
-        + np.log1p(attempts) / 18
-        + solved_volume / 34
-        + popularity / 34
-        + (tag_accuracy - 50) / 120
-        + (recent_accuracy - 55) / 150
-        - recent_failures / 7.2
-        - np.maximum(tag_count - 2, 0) * 0.1
-        - (1 - rating_confidence) * 0.22
+        base_bias
+        - rating_gap / scale_factor
+        + w1 * decayed_tag_mastery
+        + w2 * prereq_fit
+        - w3 * avg_fuzzy_struggle
+        + w4 * cosine_sim
     )
+
+    # small residual signals to preserve desirable monotonic behaviour
+    logit += np.log1p(attempts) / 28 + solved_volume / 48 + popularity / 48
+
     raw = 1 / (1 + np.exp(-logit))
     same_level_cap = 0.58 + 0.34 / (1 + np.exp((rating_gap + 80) / 260))
     ceiling_cap_bonus = 0.06 / (1 + np.exp(-(ceiling_gap - 150) / 280))
@@ -320,7 +319,8 @@ def _contest_scorecard_feature_importance() -> pd.DataFrame:
 
 
 def _scorecard_feature_importance() -> pd.DataFrame:
-    weights = np.array([0.2, 0.14, 0.2, 0.05, 0.05, 0.13, 0.1, 0.13, 0.08, 0.04, 0.03, 0.03, 0.02, 0.02])
+    # Extended importance weights to cover the new sequence-aware features
+    weights = np.array([0.18, 0.12, 0.16, 0.04, 0.04, 0.11, 0.08, 0.10, 0.06, 0.03, 0.025, 0.025, 0.02, 0.02, 0.06, 0.05, 0.05, 0.03])
     return _importance_frame(SOLVE_FEATURE_COLUMNS, weights)
 
 
