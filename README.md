@@ -113,6 +113,20 @@ The result is split into platform-specific queues:
 - `growth`: sweet-spot problems for skill improvement
 - `stretch`: harder problems that are still realistic
 
+## Sequence-Aware Fuzzy Logic Ranker
+
+AlgoRadar now uses a Sequence-Aware Fuzzy Logic Ranker to produce recommendations and solve estimates. This ranker combines time-decayed tag mastery, a fuzzy struggle signal, short-term session intent, prerequisite filtering, and cross-platform twin detection to make conservative, explainable practice suggestions.
+
+- **Time-decayed tag mastery**: per-submission tag weights are computed with exponential decay `weight = exp(-lambda * days_since)` (lambda = 0.015 days) so recent activity matters more.
+- **Fuzzy struggle**: problems where users needed multiple attempts are detected via a bounded fuzzy score: `fuzzy_struggle = clip((attempts - 1)/(T - 1), 0, 1)` with `T = 5`. The ranker aggregates an `average_fuzzy_struggle_on_tag` to surface tags where the user actually struggled.
+- **Session context**: the last 3 attempted tags are tracked as session intent. Problems matching session intent receive a `session_multiplier = 1.15` boost to learning value to respect short-term practice goals.
+- **Prerequisite filter**: a lightweight prerequisite DAG (stubbed in the code) computes a `prereq_fit_score`. Problems below the safe threshold (0.65) receive a penalty multiplier (0.8) to avoid recommending problems that likely require missing foundations.
+- **Cross-platform isomorphic twins**: LeetCode candidates that are near-duplicates of already-solved Codeforces problems are flagged and removed from growth/stretch queues when cosine similarity exceeds `0.88` (local MiniLM or TF-IDF fallback).
+
+- **Dynamic logistic scorecard**: the solve-probability score uses a dynamic logit formulation with tuned coefficients and monotonic caps. Key constants used in the current build include `base_bias=0.25`, `scale_factor=275.0`, weights `w1=0.36`, `w2=0.28`, `w3=0.44`, `w4=0.14`, and practical caps to keep estimates realistic.
+
+This change favors explainability and sequence-awareness over raw acceptance-rate signals and is validated by the test-suite included in the repo.
+
 Codeforces uses the richest signal because it has official problem ratings, tags, solved counts, and verdict-level user submissions. CodeChef and LeetCode use dynamic platform-specific scorecards from public rating, topic, contest, difficulty, and practice-problem signals instead of fixed hardcoded percentages.
 
 ## How It Works
@@ -353,6 +367,27 @@ python -m pytest -q
 ```bash
 python3 -m pytest -q
 ```
+
+## Developer Notes / Linting
+
+- Use `ruff` for lint checks and automatic fixes:
+
+```bash
+python -m pip install -r requirements-dev.txt
+ruff check .
+ruff --fix .
+```
+
+- After making changes, recommended commit flow:
+
+```bash
+git checkout -b feat/sequence-aware-ranker
+git add -A
+git commit -m "Feat: sequence-aware fuzzy ranker + twin detection + lint cleanup"
+git push -u origin feat/sequence-aware-ranker
+```
+
+- Optional: verify embeddings/local MiniLM behavior before enabling in the app. Set `ALGORADAR_ALLOW_MINILM_DOWNLOAD=1` to allow runtime downloads.
 
 ## Update README Screenshots
 
