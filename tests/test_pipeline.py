@@ -8,6 +8,7 @@ from algoradar.features import (
     submissions_to_frame,
     tag_feature_frame,
 )
+from algoradar.ml import build_model_comparison_report, summarize_feature_importance
 from algoradar.models import train_contest_score_predictor, train_solve_probability_model
 from algoradar.pipeline import run_analysis
 from algoradar.recommender import score_custom_problem
@@ -199,3 +200,32 @@ def test_real_label_dataset_trains_logistic_model() -> None:
     assert "precision@5" in report["metrics"]
     assert "recall@5" in report["metrics"]
     assert "brier_score" in report["metrics"]
+
+
+def test_temporal_model_comparison_report_is_available() -> None:
+    rows = []
+    for user_id in ["u1", "u2", "u3", "u4"]:
+        for idx in range(6):
+            rows.append(
+                {
+                    "user_id": user_id,
+                    "problem_id": f"{user_id}-{idx}",
+                    "timestamp": pd.Timestamp("2024-01-01") + pd.Timedelta(days=idx + (ord(user_id[-1]) * 2)),
+                    "difficulty_gap": float(idx * 50 - 100),
+                    "tag_mastery_before_attempt": float((idx % 3) / 3),
+                    "recent_activity_score": float((idx % 4) / 4),
+                    "y": 1 if idx % 2 == 0 else 0,
+                }
+            )
+
+    report = build_model_comparison_report(pd.DataFrame(rows), feature_columns=["difficulty_gap", "tag_mastery_before_attempt", "recent_activity_score"])
+
+    assert "best_model" in report
+    assert "by_model" in report
+    assert report["split"]["train"] >= 1
+    assert report["split"]["test"] >= 1
+    assert report["selected_model"]
+
+    importance = summarize_feature_importance(pd.DataFrame(rows), ["difficulty_gap", "tag_mastery_before_attempt", "recent_activity_score"])
+    assert not importance.empty
+    assert {"feature", "weight", "absolute_weight"}.issubset(set(importance.columns))

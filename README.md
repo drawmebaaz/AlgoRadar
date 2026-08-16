@@ -173,6 +173,20 @@ AlgoRadar avoids treating every number as equally meaningful. The main user-faci
 - **CodeChef focus areas**: rating-history and practice-volume signal from the public profile. CodeChef public solved profiles do not expose reliable tag-level verdict history.
 - **Combined solved**: sum of public solved-count signals across connected platforms. It is useful for progress direction, not as a perfect apples-to-apples skill rating.
 
+## Model Validation and Benchmarking
+
+AlgoRadar now includes a real-label evaluation layer for the solve model. The important distinction is that the solve-probability model is trained on observed user-problem outcomes from cached historical submission data, not just on heuristic priors or synthetic labels.
+
+The current validation workflow is:
+
+1. Build event-level rows from actual user attempts with a fixed outcome window.
+2. Use only pre-event information for each row so there is no future leakage.
+3. Split by user and time, not by random row shuffle.
+4. Compare a constant baseline, a monotonic heuristic baseline, a logistic model, and a calibrated logistic in the same evaluation frame.
+5. Summarize feature importance and benchmark the best model on a holdout split.
+
+This is intentionally honest: the project is not a pure black-box recommender. It is a data-driven recommendation and ranking system that blends transparent feature engineering, statistical scoring, calibrated solve estimates, and semantic retrieval.
+
 ## Setup
 
 ### 1. Clone the Repository
