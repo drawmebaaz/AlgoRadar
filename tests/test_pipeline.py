@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import pandas as pd
+
 from algoradar.features import (
     make_problem_feature_row,
     problemset_to_frame,
     submissions_to_frame,
     tag_feature_frame,
 )
-from algoradar.models import train_contest_score_predictor
+from algoradar.models import train_contest_score_predictor, train_solve_probability_model
 from algoradar.pipeline import run_analysis
 from algoradar.recommender import score_custom_problem
 from algoradar.sample_data import make_sample_bundle
@@ -118,3 +120,82 @@ def test_problem_feature_row_includes_strength_signals() -> None:
     assert features["tag_max_rating_solved"] >= 0
     assert features["solved_volume_log"] > 0
     assert features["rating_confidence"] == 1.0
+
+
+def test_real_label_dataset_trains_logistic_model() -> None:
+    rows = [
+        {
+            "user_rating_at_time": 1200,
+            "problem_rating": 1200,
+            "difficulty_gap": 0,
+            "tag_mastery": 0.7,
+            "previous_attempts": 0,
+            "recent_activity": 1,
+            "solved_before": 0,
+            "tag_count": 2,
+            "y": 1,
+        },
+        {
+            "user_rating_at_time": 1200,
+            "problem_rating": 1800,
+            "difficulty_gap": 600,
+            "tag_mastery": 0.2,
+            "previous_attempts": 3,
+            "recent_activity": 4,
+            "solved_before": 0,
+            "tag_count": 1,
+            "y": 0,
+        },
+        {
+            "user_rating_at_time": 1350,
+            "problem_rating": 1400,
+            "difficulty_gap": 50,
+            "tag_mastery": 0.8,
+            "previous_attempts": 1,
+            "recent_activity": 2,
+            "solved_before": 1,
+            "tag_count": 2,
+            "y": 1,
+        },
+        {
+            "user_rating_at_time": 1350,
+            "problem_rating": 2200,
+            "difficulty_gap": 850,
+            "tag_mastery": 0.1,
+            "previous_attempts": 5,
+            "recent_activity": 5,
+            "solved_before": 0,
+            "tag_count": 3,
+            "y": 0,
+        },
+        {
+            "user_rating_at_time": 1400,
+            "problem_rating": 1500,
+            "difficulty_gap": 100,
+            "tag_mastery": 0.9,
+            "previous_attempts": 0,
+            "recent_activity": 1,
+            "solved_before": 1,
+            "tag_count": 2,
+            "y": 1,
+        },
+        {
+            "user_rating_at_time": 1400,
+            "problem_rating": 2000,
+            "difficulty_gap": 600,
+            "tag_mastery": 0.25,
+            "previous_attempts": 2,
+            "recent_activity": 3,
+            "solved_before": 0,
+            "tag_count": 2,
+            "y": 0,
+        },
+    ]
+
+    report = train_solve_probability_model(pd.DataFrame(rows))
+
+    assert report["selected_model_name"] == "logistic_regression_real_labels"
+    assert report["metrics"]["roc_auc"] >= 0.5
+    assert "precision@5" in report["metrics"]
+    assert "recall@5" in report["metrics"]
+    assert "brier_score" in report["metrics"]

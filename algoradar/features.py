@@ -27,6 +27,8 @@ SOLVE_FEATURE_COLUMNS = [
     "decayed_tag_mastery",
     "prereq_fit_score",
     "average_fuzzy_struggle_on_tag",
+    "recent_mastery",
+    "long_term_mastery",
     "cosine_similarity",
 ]
 
@@ -219,6 +221,19 @@ def tag_feature_frame(submissions: pd.DataFrame, problems: pd.DataFrame | None =
     recent_failures = recent[recent["is_wrong"]].groupby("tag").size().rename("recent_failures")
     recent_accuracy = recent.groupby("tag")["is_accepted"].mean().rename("recent_accuracy")
 
+    # long-term mastery: compute accuracy from submissions older than a recent window (days)
+    RECENT_WINDOW_DAYS = 30
+    if "age_days" in exploded.columns:
+        older = exploded[exploded["age_days"] > RECENT_WINDOW_DAYS]
+    else:
+        older = exploded.iloc[0:0]
+    if not older.empty:
+        long_attempts = older.groupby("tag")["is_accepted"].count().rename("long_attempts")
+        long_accepted = older.groupby("tag")["is_accepted"].sum().rename("long_accepted")
+        long_accuracy = (long_accepted / long_attempts).rename("long_accuracy")
+    else:
+        long_accuracy = pd.Series(dtype=float)
+
     # fuzzy struggle: compute per-problem attempts then average (time-weighted)
     # attempts_on_problem is derived from raw submission counts (not exploded)
     problem_attempts = submissions.groupby("problem_id").size().to_dict()
@@ -233,6 +248,13 @@ def tag_feature_frame(submissions: pd.DataFrame, problems: pd.DataFrame | None =
     frame = frame.join([attempts, solved, accepted_submissions, wrong, avg_rating, max_rating, recent_failures, recent_accuracy, avg_fuzzy_struggle]).fillna(0)
     frame["accuracy"] = np.where(frame["attempts"] > 0, frame["accepted_submissions"] / frame["attempts"] * 100, 0.0)
     frame["recent_accuracy"] = frame["recent_accuracy"] * 100
+    # long_term_mastery: prefer long_accuracy when available, else fallback to overall accuracy
+    def _long_term_mastery_for_tag(tag: str) -> float:
+        v = long_accuracy.get(tag, None)
+        if v is not None and not pd.isna(v):
+            return float(v * 100)
+        return float(frame.loc[tag, "accuracy"] if tag in frame.index else 0.0)
+    frame["long_term_mastery"] = [ _long_term_mastery_for_tag(tag) for tag in frame.index ]
     return frame.reset_index()[
         [
             "tag",
@@ -245,6 +267,7 @@ def tag_feature_frame(submissions: pd.DataFrame, problems: pd.DataFrame | None =
             "recent_failures",
             "recent_accuracy",
             "avg_fuzzy_struggle",
+            "long_term_mastery",
         ]
     ]
 
@@ -395,6 +418,8 @@ def build_solve_examples(
                 "rating_confidence": rating_confidence,
                 "prereq_fit_score": 1.0,
                 "average_fuzzy_struggle_on_tag": float(np.mean([tag_lookup.get(tag, {}).get("avg_fuzzy_struggle", 0.0) for tag in tags])) if tags else 0.0,
+                "recent_mastery": float(np.mean([tag_lookup.get(tag, {}).get("recent_accuracy", 0.0) / 100.0 for tag in tags])) if tags else 0.0,
+                "long_term_mastery": float(np.mean([tag_lookup.get(tag, {}).get("long_term_mastery", tag_lookup.get(tag, {}).get("accuracy", 0.0)) / 100.0 for tag in tags])) if tags else 0.0,
                 "cosine_similarity": 0.0,
                 "solved": solved,
             }
@@ -447,6 +472,8 @@ def make_problem_feature_row(
         "decayed_tag_mastery": float(np.mean([v / 100.0 for v in tag_values])) if tag_values else 0.0,
         "prereq_fit_score": 1.0,
         "average_fuzzy_struggle_on_tag": float(np.mean([tag_lookup.get(tag, {}).get("avg_fuzzy_struggle", 0.0) for tag in tags])) if tags else 0.0,
+        "recent_mastery": float(np.mean([tag_lookup.get(tag, {}).get("recent_accuracy", 0.0) / 100.0 for tag in tags])) if tags else 0.0,
+        "long_term_mastery": float(np.mean([tag_lookup.get(tag, {}).get("long_term_mastery", tag_lookup.get(tag, {}).get("accuracy", 0.0)) / 100.0 for tag in tags])) if tags else 0.0,
         "cosine_similarity": 0.0,
     }
 
@@ -462,6 +489,7 @@ def _explode_submission_tags(submissions: pd.DataFrame) -> pd.DataFrame:
         delta_days = (now - frame["created_at"]).dt.total_seconds() / 86400.0
         delta_days = delta_days.fillna(0.0)
         frame["weight"] = np.exp(-LAMBDA * delta_days.astype(float))
+        frame["age_days"] = delta_days.astype(float)
     except (AttributeError, KeyError, TypeError, ValueError):
         frame["weight"] = 1.0
 

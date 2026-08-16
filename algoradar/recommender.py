@@ -9,8 +9,22 @@ from .features import SOLVE_FEATURE_COLUMNS, make_problem_feature_row
 from .models import bucket_probability, predict_solve_probability
 from .semantic import detect_isomorphic_twins, normalize, tag_similarity_score
 
-# Simple prerequisite DAG stub (can be extended)
-PREREQ_DAG = {"Tree DP": ["DFS", "1D DP"]}
+# Prerequisite DAG: warm-start with domain-aware tag dependencies
+PREREQ_DAG = {
+    "dp": ["math", "implementation"],
+    "tree dp": ["dp", "trees"],
+    "dfs": ["graphs", "trees"],
+    "graphs": ["implementation", "dfs"],
+    "trees": ["graphs", "dfs"],
+    "binary search": ["math", "sortings"],
+    "greedy": ["math", "sortings"],
+    "constructive algorithms": ["greedy", "implementation"],
+    "number theory": ["math"],
+    "strings": ["implementation", "dp"],
+    "two pointers": ["sortings", "implementation"],
+    "data structures": ["implementation", "graphs"],
+    "math": ["number theory"],
+}
 
 TAG_COSINE_WEIGHT = 0.12
 RATING_FIT_WEIGHT = 0.14
@@ -47,22 +61,31 @@ def recommend_problems(
 
     tag_lookup = tag_stats.set_index("tag").to_dict("index") if not tag_stats.empty else {}
 
-    # Session context: find common tag among last 3 attempted tags
-    session_multiplier = 1.0
-    session_tag = None
-    if not submissions.empty:
-        if "created_at" in submissions.columns:
-            recent_tags = submissions.sort_values("created_at", ascending=False).explode("tags")["tags"].dropna().astype(str)
-        else:
-            recent_tags = submissions.explode("tags")["tags"].dropna().astype(str)
-        last3 = recent_tags.head(6).tolist()
-        from collections import Counter
+    # Session context: build recency-weighted session intent from last unique attempted problems
+    SESSION_DEPTH = 3
+    SESSION_DECAY_BASE = 0.6  # per-position exponential decay (0 -> most recent)
+    SESSION_MAX_MULTIPLIER = 1.15
 
-        if last3:
-            most_common, count = Counter(last3).most_common(1)[0]
-            if count >= 2:
-                session_tag = most_common
-                session_multiplier = 1.15
+    session_intent: dict[str, float] = {}
+    if not submissions.empty and "tags" in submissions.columns:
+        df_sub = submissions.sort_values("created_at", ascending=False) if "created_at" in submissions.columns else submissions.copy()
+        if "problem_id" in df_sub.columns:
+            unique_recent = df_sub.drop_duplicates("problem_id").reset_index(drop=True)
+        else:
+            unique_recent = df_sub.reset_index(drop=True)
+        recent_slice = unique_recent.head(SESSION_DEPTH).copy()
+        if not recent_slice.empty:
+            recent_slice = recent_slice.reset_index(drop=True)
+            recent_slice["pos"] = recent_slice.index.astype(int)
+            exploded = recent_slice.explode("tags")
+            exploded = exploded[exploded["tags"].notna()].copy()
+            if not exploded.empty:
+                exploded["tags"] = exploded["tags"].astype(str)
+                exploded["weight"] = exploded["pos"].apply(lambda p: float(SESSION_DECAY_BASE ** p))
+                tag_scores = exploded.groupby("tags")["weight"].sum().to_dict()
+                if tag_scores:
+                    max_score = max(tag_scores.values()) or 1.0
+                    session_intent = {tag: float(score / max_score) for tag, score in tag_scores.items()}
 
     # Precompute per-candidate decayed_tag_mastery and avg fuzzy struggle from tag_stats
     def _decayed_mastery_for_tags(tags: list[str]) -> float:
@@ -75,18 +98,31 @@ def recommend_problems(
 
     candidate["decayed_tag_mastery"] = candidate["tags"].apply(lambda tags: _decayed_mastery_for_tags(tags or []))
     candidate["average_fuzzy_struggle_on_tag"] = candidate["tags"].apply(lambda tags: _avg_fuzzy_struggle_for_tags(tags or []))
+    candidate["recent_mastery"] = candidate["tags"].apply(lambda tags: float(np.mean([tag_lookup.get(tag, {}).get("recent_accuracy", 0.0) / 100.0 for tag in (tags or [])])) if tags else 0.0)
+    candidate["long_term_mastery"] = candidate["tags"].apply(lambda tags: float(np.mean([tag_lookup.get(tag, {}).get("long_term_mastery", tag_lookup.get(tag, {}).get("accuracy", 0.0)) / 100.0 for tag in (tags or [])])) if tags else 0.0)
 
     # Prerequisite fit score per candidate
     def _prereq_fit(tags: list[str]) -> float:
         scores: list[float] = []
+        seen: set[str] = set()
         for tag in tags:
-            prereqs = PREREQ_DAG.get(tag, [])
+            key = str(tag).strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            prereqs = PREREQ_DAG.get(key, [])
             if not prereqs:
                 continue
-            prereq_vals = [tag_lookup.get(p, {}).get("accuracy", 0.0) / 100.0 for p in prereqs]
+            prereq_vals = []
+            for prereq in prereqs:
+                prereq_key = str(prereq).strip().lower()
+                prereq_vals.append(tag_lookup.get(prereq_key, {}).get("accuracy", 0.0) / 100.0)
+                prereq_vals.append(tag_lookup.get(prereq_key.title(), {}).get("accuracy", 0.0) / 100.0)
             if prereq_vals:
                 scores.append(float(np.mean(prereq_vals)))
-        return float(np.mean(scores)) if scores else 1.0
+        if not scores:
+            return 1.0
+        return float(np.clip(np.mean(scores), 0.0, 1.0))
 
     candidate["prereq_fit_score"] = candidate["tags"].apply(lambda tags: _prereq_fit(tags or []))
 
@@ -101,7 +137,7 @@ def recommend_problems(
     ]
     feature_frame = pd.DataFrame(feature_rows)
     # overwrite / inject the sequence-aware features computed above
-    for col in ["decayed_tag_mastery", "prereq_fit_score", "average_fuzzy_struggle_on_tag"]:
+    for col in ["decayed_tag_mastery", "prereq_fit_score", "average_fuzzy_struggle_on_tag", "recent_mastery", "long_term_mastery"]:
         if col in candidate.columns:
             feature_frame[col] = candidate[col].to_numpy()
     # inject cosine similarity feature from tag-based cosine
@@ -136,9 +172,17 @@ def recommend_problems(
         + RATING_FIT_WEIGHT * candidate["rating_fit_score"]
         - 0.00028 * candidate["rating_distance"]
     )
-    # Apply session intent multiplier to matching-tag candidates
-    if session_tag:
-        candidate.loc[candidate["tags"].apply(lambda tags: session_tag in (tags or [])), "learning_value"] *= session_multiplier
+    # Apply session intent multiplier to candidates proportionally based on tag-level session intent
+    if session_intent:
+        def _candidate_session_multiplier(tags: list[str]) -> float:
+            if not tags:
+                return 1.0
+            scores = [session_intent.get(tag, 0.0) for tag in tags]
+            max_score = float(max(scores) if scores else 0.0)
+            return 1.0 + max_score * (SESSION_MAX_MULTIPLIER - 1.0)
+
+        candidate["session_multiplier"] = candidate["tags"].apply(lambda tags: _candidate_session_multiplier(tags or []))
+        candidate["learning_value"] = candidate["learning_value"] * candidate["session_multiplier"]
 
     # Apply prerequisite penalty for candidates failing prereq fit
     prereq_threshold = 0.65

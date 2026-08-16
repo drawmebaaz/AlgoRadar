@@ -2,11 +2,13 @@
 
 ![AlgoRadar combined analysis](social_assets/algoradar-screenshot-combined-analysis.png)
 
-**AlgoRadar | Competitive Programming Analytics and Problem Recommender**
+**AlgoRadar | Data-Driven Competitive Programming Analytics and Recommender**
 
-AlgoRadar is a competitive programming analytics and recommendation system for Codeforces, CodeChef, and LeetCode. A user enters any combination of the three handles, and the app returns platform-wise analytics, focus areas, practice recommendations, and practical solve estimates from the handles provided.
+AlgoRadar is a data-driven competitive programming analytics and recommendation system for Codeforces, CodeChef, and LeetCode. A user enters any combination of the three handles, and the app returns platform-wise analytics, focus areas, practice recommendations, and practical solve estimates from the handles provided.
 
-The goal is not just to show charts. AlgoRadar builds a full data pipeline: API ingestion, caching, data cleaning, feature engineering, transparent scoring rules, calibrated solve estimates, problem ranking, and similar-problem search. Codeforces has the deepest signal because its official API exposes verdict-level submissions. LeetCode and CodeChef are normalized into the same product experience using their public profile, contest, topic, and practice-problem data.
+At a high level, AlgoRadar is best described as a data-driven recommendation and ranking system with statistical scoring and semantic retrieval. The project combines public platform data, feature engineering, transparent ranking rules, calibrated solve-probability models, and retrieval-based similar-problem search. Codeforces has the deepest signal because its official API exposes verdict-level submissions. LeetCode and CodeChef are normalized into the same product experience using their public profile, contest, topic, and practice-problem data.
+
+The goal is not just to show charts. AlgoRadar builds a full data pipeline: API ingestion, caching, data cleaning, feature engineering, transparent scoring rules, real-label model evaluation, problem ranking, and similar-problem search. The current stack is grounded in observed user-problem outcomes from cached histories when available, rather than relying only on hand-tuned priors or synthetic labels.
 
 ## Features
 
@@ -90,8 +92,9 @@ The solve estimate uses practical signals such as:
 - problem popularity
 - tag count
 - confidence in the problem difficulty source
+- real-label solve features from cached common-user outcomes when available
 
-Success rate is intentionally not the main signal. Public accepted submissions can be inflated by editorials or AI help, so AlgoRadar gives more importance to solved volume, tag depth, hardest solved difficulty, and the gap between the target problem and the user's demonstrated level.
+This is not a black-box ML-only system. It is a statistical recommendation stack that blends explainable features, calibrated logistic scoring, and lightweight semantic retrieval. Success rate is intentionally not the main signal. Public accepted submissions can be inflated by editorials or AI help, so AlgoRadar gives more importance to solved volume, tag depth, hardest solved difficulty, and the gap between the target problem and the user's demonstrated level.
 
 Recommendations are then ranked using:
 
@@ -507,7 +510,7 @@ AlgoRadar classifies recommended problems into:
 
 - The dashboard uses real platform data by default.
 - API responses, profile pages, and problem catalogs are cached locally to improve speed.
-- Solve estimate uses `data/platform_calibration.csv` as a calibration prior, not as ground-truth solved labels. It should be retrained later with real common-user solve outcomes if you collect that dataset.
+- The project now builds a labeled user-problem dataset from cached Codeforces histories and evaluates logistic models on real solve outcomes, making the probability model grounded in actual historical outcomes rather than a synthetic prior alone.
 - Codeforces problem tags are pulled from the Codeforces problemset. LeetCode problem tags are pulled automatically when you enter a problem slug or URL in Solve estimate.
 - First-time LeetCode/CodeChef recommendation pulls can take a few seconds because the app builds local caches. Reopening the same handles is much faster.
 - The app analyzes the latest 2,500 Codeforces submissions for a practical balance of speed and signal.

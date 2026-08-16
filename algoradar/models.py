@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
+from sklearn.model_selection import train_test_split
 
 from .features import SOLVE_FEATURE_COLUMNS
 
@@ -45,7 +52,23 @@ def train_contest_score_predictor(profile: dict[str, Any], random_state: int = 4
     }
 
 
+REAL_LABEL_FEATURE_COLUMNS = [
+    "user_rating_at_time",
+    "problem_rating",
+    "difficulty_gap",
+    "tag_mastery",
+    "previous_attempts",
+    "recent_activity",
+    "solved_before",
+    "tag_count",
+]
+
+
 def train_solve_probability_model(examples: pd.DataFrame, random_state: int = 42) -> dict[str, Any]:
+    frame = examples.copy()
+    if _has_real_label_columns(frame):
+        return _train_real_label_model(frame, random_state=random_state)
+
     frame = _ensure_solve_training_rows(examples, random_state=random_state)
     frame = _ensure_feature_columns(frame, SOLVE_FEATURE_COLUMNS)
     x = frame[SOLVE_FEATURE_COLUMNS]
@@ -65,8 +88,303 @@ def train_solve_probability_model(examples: pd.DataFrame, random_state: int = 42
     }
 
 
+def build_real_solve_training_dataset(
+    cache_dir: str | Path | None = None,
+    max_users: int | None = None,
+    min_examples_per_user: int = 2,
+    save_path: str | Path | None = None,
+    overwrite: bool = False,
+) -> pd.DataFrame:
+    cache_root = Path(cache_dir) if cache_dir is not None else Path(__file__).resolve().parent.parent / "data" / "cache"
+    if not cache_root.exists():
+        empty = pd.DataFrame(columns=REAL_LABEL_FEATURE_COLUMNS + ["y", "problem_id", "handle", "result", "time_to_solve"])
+        if save_path is not None:
+            target = Path(save_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            empty.to_csv(target, index=False)
+        return empty
+
+    problemset = json.loads((cache_root / "problemset.json").read_text(encoding="utf-8")) if (cache_root / "problemset.json").exists() else {"problems": []}
+    problem_lookup = {}
+    for problem in problemset.get("problems", []):
+        pid = f"{problem.get('contestId', 'unknown')}{problem.get('index', 'X')}"
+        tags = problem.get("tags") or []
+        rating = problem.get("rating")
+        problem_lookup[pid] = {"tags": list(tags), "rating": float(rating) if rating is not None else None}
+
+    rows: list[dict[str, Any]] = []
+    handles = sorted({path.name.split("user_status_")[1].rsplit("_", 1)[0] for path in cache_root.glob("user_status_*.json")})
+    if max_users is not None:
+        handles = handles[:max_users]
+
+    for handle in handles:
+        status_path = cache_root / f"user_status_{handle}_1200.json"
+        if not status_path.exists():
+            matches = sorted(cache_root.glob(f"user_status_{handle}_*.json"))
+            if not matches:
+                continue
+            status_path = matches[0]
+        submissions = json.loads(status_path.read_text(encoding="utf-8"))
+        if not submissions:
+            continue
+        sorted_submissions = sorted(submissions, key=lambda s: int(s.get("creationTimeSeconds", 0)))
+        ratings = []
+        rating_path = cache_root / f"user_rating_{handle}.json"
+        if rating_path.exists():
+            ratings = json.loads(rating_path.read_text(encoding="utf-8"))
+        rating_history = sorted(ratings, key=lambda item: int(item.get("ratingUpdateTimeSeconds", 0)))
+
+        by_problem: dict[str, list[dict[str, Any]]] = {}
+        for submission in sorted_submissions:
+            problem = submission.get("problem", {})
+            pid = f"{problem.get('contestId', 'unknown')}{problem.get('index', 'X')}"
+            by_problem.setdefault(pid, []).append(submission)
+
+        for pid, items in by_problem.items():
+            if len(items) < min_examples_per_user:
+                continue
+            first_seen = min(int(item.get("creationTimeSeconds", 0)) for item in items)
+            first_accepted = next((int(item.get("creationTimeSeconds", 0)) for item in items if item.get("verdict") == "OK"), None)
+            problem_info = items[0].get("problem", {})
+            problem_tags = list(problem_info.get("tags") or problem_lookup.get(pid, {}).get("tags", []))
+            problem_rating = float(problem_info.get("rating") or problem_lookup.get(pid, {}).get("rating") or 1200.0)
+            user_rating_at_time = _rating_at_time(handle, rating_history, first_seen, default=problem_rating)
+            prior = [item for item in sorted_submissions if int(item.get("creationTimeSeconds", 0)) < first_seen]
+            prior_same_tags = [item for item in prior if set(problem_tags).intersection(item.get("problem", {}).get("tags", []))]
+            prior_accepted_same_tag = sum(1 for item in prior_same_tags if item.get("verdict") == "OK")
+            tag_mastery = 0.0
+            if prior_same_tags:
+                tag_mastery = sum(1.0 for item in prior_same_tags if item.get("verdict") == "OK") / max(len(prior_same_tags), 1)
+            recent_window_start = first_seen - 30 * 86400
+            recent_activity = sum(1 for item in prior if int(item.get("creationTimeSeconds", 0)) >= recent_window_start)
+            solved_before = 1 if any(item.get("verdict") == "OK" for item in prior if item.get("problem", {}).get("contestId") == problem_info.get("contestId") and item.get("problem", {}).get("index") == problem_info.get("index")) else 0
+            previous_attempts = sum(1 for item in prior if item.get("problem", {}).get("contestId") == problem_info.get("contestId") and item.get("problem", {}).get("index") == problem_info.get("index"))
+            difficulty_gap = problem_rating - user_rating_at_time
+            time_to_solve = (first_accepted - first_seen) / 86400.0 if first_accepted is not None else np.nan
+
+            rows.append(
+                {
+                    "handle": handle,
+                    "problem_id": pid,
+                    "y": 1 if first_accepted is not None else 0,
+                    "result": "solved" if first_accepted is not None else "unsolved",
+                    "user_rating_at_time": float(user_rating_at_time),
+                    "problem_rating": float(problem_rating),
+                    "difficulty_gap": float(difficulty_gap),
+                    "tag_mastery": float(tag_mastery),
+                    "previous_attempts": float(previous_attempts),
+                    "recent_activity": float(recent_activity),
+                    "solved_before": float(solved_before),
+                    "tag_count": float(len(problem_tags)),
+                    "time_to_solve": float(time_to_solve) if not pd.isna(time_to_solve) else np.nan,
+                }
+            )
+
+    dataset = pd.DataFrame(rows)
+    if dataset.empty:
+        if save_path is not None:
+            target = Path(save_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            dataset.to_csv(target, index=False)
+        return dataset
+    dataset["y"] = dataset["y"].astype(int)
+    dataset["tag_mastery"] = dataset["tag_mastery"].clip(0.0, 1.0)
+    if save_path is not None:
+        target = Path(save_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        dataset.to_csv(target, index=False)
+    return dataset
+
+
+def load_or_build_real_label_dataset(
+    cache_dir: str | Path | None = None,
+    max_users: int | None = None,
+    min_examples_per_user: int = 2,
+    dataset_path: str | Path | None = None,
+) -> pd.DataFrame:
+    cache_root = Path(cache_dir) if cache_dir is not None else Path(__file__).resolve().parent.parent / "data" / "cache"
+    default_path = Path(dataset_path) if dataset_path is not None else cache_root / "real_solve_training_dataset.csv"
+    if default_path.exists():
+        return pd.read_csv(default_path)
+    return build_real_solve_training_dataset(
+        cache_dir=str(cache_root),
+        max_users=max_users,
+        min_examples_per_user=min_examples_per_user,
+        save_path=default_path,
+        overwrite=True,
+    )
+
+
+def _rating_at_time(handle: str, rating_history: list[dict[str, Any]], event_time: int, default: float = 1200.0) -> float:
+    current = default
+    for row in rating_history:
+        rating_time = int(row.get("ratingUpdateTimeSeconds", 0))
+        if rating_time <= event_time:
+            current = float(row.get("newRating", current) or current)
+    return float(current)
+
+
+def _has_real_label_columns(frame: pd.DataFrame) -> bool:
+    return {"y", "user_rating_at_time", "problem_rating", "difficulty_gap", "tag_mastery"}.issubset(frame.columns)
+
+
+def evaluate_real_label_models(frame: pd.DataFrame, random_state: int = 42) -> dict[str, Any]:
+    working = frame.copy()
+    working = working[REAL_LABEL_FEATURE_COLUMNS + ["y"]].dropna(subset=REAL_LABEL_FEATURE_COLUMNS + ["y"]).copy()
+    if working.empty or working["y"].nunique() < 2:
+        return {
+            "selected_model_name": "heuristic_fallback",
+            "model": None,
+            "logistic_regression": None,
+            "calibrated_logistic": None,
+            "random_forest": None,
+            "metrics": {"status": "insufficient_real_labels"},
+            "candidate_metrics": {},
+            "features": REAL_LABEL_FEATURE_COLUMNS,
+            "training_rows": len(working),
+        }
+
+    x = working[REAL_LABEL_FEATURE_COLUMNS]
+    y = working["y"].astype(int)
+    x_train, x_test, y_train, y_test = train_test_split(
+        x,
+        y,
+        test_size=0.25,
+        random_state=random_state,
+        stratify=y,
+    )
+    imputer = SimpleImputer(strategy="median")
+    x_train_imputed = imputer.fit_transform(x_train)
+    x_test_imputed = imputer.transform(x_test)
+
+    candidate_models: dict[str, Any] = {
+        "logistic_regression": LogisticRegression(max_iter=2000, class_weight="balanced", random_state=random_state),
+    }
+    if y_train.nunique() == 2 and int(y_train.value_counts().min()) >= 3:
+        candidate_models["calibrated_logistic"] = CalibratedClassifierCV(
+            estimator=LogisticRegression(max_iter=2000, class_weight="balanced", random_state=random_state),
+            method="sigmoid",
+            cv=3,
+        )
+
+    candidate_metrics: dict[str, dict[str, float]] = {}
+    fitted_models: dict[str, Any] = {}
+    for name, model in candidate_models.items():
+        model.fit(x_train_imputed, y_train)
+        fitted_models[name] = model
+        if hasattr(model, "predict_proba"):
+            probs = model.predict_proba(x_test_imputed)[:, 1]
+        else:
+            probs = model.predict(x_test_imputed).astype(float)
+        candidate_metrics[name] = _classifier_metrics(y_test.to_numpy(), probs)
+
+    best_name = max(
+        candidate_metrics,
+        key=lambda name: (
+            candidate_metrics[name].get("roc_auc", 0.0),
+            candidate_metrics[name].get("pr_auc", 0.0),
+            candidate_metrics[name].get("ndcg@10", 0.0),
+        ),
+    )
+    best_model = fitted_models[best_name]
+    pipeline = {
+        "imputer": imputer,
+        "model": best_model,
+        "feature_columns": REAL_LABEL_FEATURE_COLUMNS,
+    }
+
+    return {
+        "selected_model_name": f"{best_name}_real_labels",
+        "model": pipeline,
+        "logistic_regression": fitted_models.get("logistic_regression"),
+        "calibrated_logistic": fitted_models.get("calibrated_logistic"),
+        "random_forest": None,
+        "metrics": candidate_metrics[best_name],
+        "candidate_metrics": candidate_metrics,
+        "features": REAL_LABEL_FEATURE_COLUMNS,
+        "training_rows": len(working),
+    }
+
+
+def _train_real_label_model(frame: pd.DataFrame, random_state: int = 42) -> dict[str, Any]:
+    return evaluate_real_label_models(frame, random_state=random_state)
+
+
+def _classifier_metrics(y_true: np.ndarray, y_prob: np.ndarray, ks: tuple[int, ...] = (5, 10)) -> dict[str, float]:
+    true = np.asarray(y_true, dtype=int)
+    prob = np.asarray(y_prob, dtype=float).clip(0.0, 1.0)
+    pred = (prob >= 0.5).astype(int)
+    if len(np.unique(true)) < 2:
+        return {"roc_auc": 0.5, "pr_auc": 0.5, "brier_score": float(brier_score_loss(true, prob)), "calibration_error": 0.0, "precision@5": 0.0, "recall@5": 0.0, "precision@10": 0.0, "recall@10": 0.0, "ndcg@5": 0.0, "ndcg@10": 0.0}
+
+    roc = float(roc_auc_score(true, prob))
+    pr_auc = float(average_precision_score(true, prob))
+    brier = float(brier_score_loss(true, prob))
+    calibration_error = _calibration_error(true, prob)
+    metrics: dict[str, float] = {
+        "roc_auc": roc,
+        "pr_auc": pr_auc,
+        "brier_score": brier,
+        "calibration_error": calibration_error,
+    }
+    for k in ks:
+        precision, recall = _precision_recall_at_k(true, prob, k)
+        ndcg = _ndcg_at_k(true, prob, k)
+        metrics[f"precision@{k}"] = float(precision)
+        metrics[f"recall@{k}"] = float(recall)
+        metrics[f"ndcg@{k}"] = float(ndcg)
+    return metrics
+
+
+def _calibration_error(y_true: np.ndarray, y_prob: np.ndarray, bins: int = 10) -> float:
+    bins_edges = np.linspace(0.0, 1.0, bins + 1)
+    deltas: list[float] = []
+    for left, right in zip(bins_edges[:-1], bins_edges[1:]):
+        mask = (y_prob >= left) & (y_prob < right) if right < 1.0 else (y_prob >= left) & (y_prob <= right)
+        if not np.any(mask):
+            continue
+        avg_pred = float(y_prob[mask].mean())
+        avg_true = float(y_true[mask].mean())
+        deltas.append(abs(avg_pred - avg_true))
+    return float(np.mean(deltas)) if deltas else 0.0
+
+
+def _precision_recall_at_k(y_true: np.ndarray, y_prob: np.ndarray, k: int) -> tuple[float, float]:
+    order = np.argsort(-y_prob)[: k]
+    if order.size == 0:
+        return 0.0, 0.0
+    hits = int(np.sum(y_true[order] == 1))
+    precision = hits / max(len(order), 1)
+    recall = hits / max(np.sum(y_true == 1), 1)
+    return precision, recall
+
+
+def _ndcg_at_k(y_true: np.ndarray, y_prob: np.ndarray, k: int) -> float:
+    order = np.argsort(-y_prob)[:k]
+    if order.size == 0:
+        return 0.0
+    labels = y_true[order].astype(float)
+    dcg = float(np.sum((2 ** labels - 1) / np.log2(np.arange(2, len(labels) + 2))))
+    ideal = np.sort(y_true)[::-1][:k]
+    idcg = float(np.sum((2 ** ideal - 1) / np.log2(np.arange(2, len(ideal) + 2)))) if len(ideal) else 0.0
+    return dcg / idcg if idcg > 0 else 0.0
+
+
 def predict_solve_probability(model_report: dict[str, Any], feature_rows: pd.DataFrame | list[dict[str, Any]]) -> np.ndarray:
     frame = pd.DataFrame(feature_rows)
+    if "real_labels" in str(model_report.get("selected_model_name", "")):
+        pipeline = model_report.get("model") or {}
+        model = pipeline.get("model") if isinstance(pipeline, dict) else None
+        imputer = pipeline.get("imputer") if isinstance(pipeline, dict) else None
+        features = model_report.get("features", REAL_LABEL_FEATURE_COLUMNS)
+        frame = frame[features].copy()
+        if imputer is not None:
+            frame = imputer.transform(frame)
+        if model is not None and hasattr(model, "predict_proba"):
+            return model.predict_proba(frame)[:, 1]
+        if model is not None:
+            return np.asarray(model.predict(frame), dtype=float)
+
     frame = _ensure_feature_columns(frame, model_report["features"])
     x = frame[model_report["features"]]
     model = model_report.get("model")
@@ -285,22 +603,38 @@ def _monotonic_solve_probabilities(features: pd.DataFrame) -> np.ndarray:
     prereq_fit = frame.get("prereq_fit_score", pd.Series(1.0, index=frame.index)).astype(float).clip(0, 1)
     avg_fuzzy_struggle = frame.get("average_fuzzy_struggle_on_tag", pd.Series(0.0, index=frame.index)).astype(float).clip(0, 1)
     cosine_sim = frame.get("cosine_similarity", pd.Series(0.0, index=frame.index)).astype(float).clip(0, 1)
+    recent_mastery = frame.get("recent_mastery", pd.Series(0.0, index=frame.index)).astype(float).clip(0, 1)
+    long_term_mastery = frame.get("long_term_mastery", pd.Series(0.0, index=frame.index)).astype(float).clip(0, 1)
 
     # coefficients for logit -- chosen conservatively; tuneable
     base_bias = 0.25
     scale_factor = 275.0
-    w1 = 0.36
-    w2 = 0.28
-    w3 = 0.44
-    w4 = 0.14
+    # expose module-level tunable weights (defaults chosen conservatively)
+    try:
+        from . import config as _cfg
+        W_DECAY = float(getattr(_cfg, "W_DECAY", 0.36))
+        W_PREREQ = float(getattr(_cfg, "W_PREREQ", 0.28))
+        W_FUZZY = float(getattr(_cfg, "W_FUZZY", 0.44))
+        W_COSINE = float(getattr(_cfg, "W_COSINE", 0.14))
+        W_RECENT = float(getattr(_cfg, "W_RECENT", 0.22))
+        W_LONGTERM = float(getattr(_cfg, "W_LONGTERM", 0.18))
+    except Exception:
+        W_DECAY = 0.36
+        W_PREREQ = 0.28
+        W_FUZZY = 0.44
+        W_COSINE = 0.14
+        W_RECENT = 0.22
+        W_LONGTERM = 0.18
 
     logit = (
         base_bias
         - rating_gap / scale_factor
-        + w1 * decayed_tag_mastery
-        + w2 * prereq_fit
-        - w3 * avg_fuzzy_struggle
-        + w4 * cosine_sim
+        + W_DECAY * decayed_tag_mastery
+        + W_PREREQ * prereq_fit
+        - W_FUZZY * avg_fuzzy_struggle
+        + W_COSINE * cosine_sim
+        + W_RECENT * recent_mastery
+        + W_LONGTERM * long_term_mastery
     )
 
     # small residual signals to preserve desirable monotonic behaviour
@@ -320,7 +654,7 @@ def _contest_scorecard_feature_importance() -> pd.DataFrame:
 
 def _scorecard_feature_importance() -> pd.DataFrame:
     # Extended importance weights to cover the new sequence-aware features
-    weights = np.array([0.18, 0.12, 0.16, 0.04, 0.04, 0.11, 0.08, 0.10, 0.06, 0.03, 0.025, 0.025, 0.02, 0.02, 0.06, 0.05, 0.05, 0.03])
+    weights = np.array([0.18, 0.12, 0.16, 0.04, 0.04, 0.11, 0.08, 0.10, 0.06, 0.03, 0.025, 0.025, 0.02, 0.02, 0.06, 0.05, 0.05, 0.03, 0.04, 0.03])
     return _importance_frame(SOLVE_FEATURE_COLUMNS, weights)
 
 

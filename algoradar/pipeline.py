@@ -91,9 +91,9 @@ def run_analysis(
     semantic_method = "deferred"
     similar_harder = pd.DataFrame()
     if include_semantic and not recommendations.empty:
-        from .semantic import build_semantic_index, similar_problems
+        from .semantic import build_global_index, similar_problems
 
-        semantic_index = build_semantic_index(problems, prefer_transformer=prefer_transformer)
+        semantic_index = build_global_index(problems, prefer_transformer=prefer_transformer)
         semantic_method = semantic_index.method
         reference_id = recommendations.iloc[0]["problem_id"]
         reference = problems[problems["problem_id"] == reference_id].iloc[0]
