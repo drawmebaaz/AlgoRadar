@@ -14,7 +14,6 @@ import pandas as pd
 import requests
 
 from .config import CACHE_DIR
-from .semantic import detect_isomorphic_twins
 
 REQUEST_TIMEOUT_SECONDS = 8
 CACHE_MAX_AGE_SECONDS = 6 * 3600
@@ -1276,18 +1275,6 @@ def _platform_summary_row(analysis: PlatformAnalysis) -> dict[str, Any]:
         "accuracy": accuracy,
         "signal": signal,
     }
-
-
-def isomorphic_twin_candidates(candidates: pd.DataFrame, solved_problems: pd.DataFrame, threshold: float = 0.88) -> set:
-    """Return a set of candidate `problem_id`s that are semantically isomorphic to solved problems.
-
-    Wrapper around `semantic.detect_isomorphic_twins` to provide a stable API used by recommender.
-    """
-    try:
-        flagged = detect_isomorphic_twins(candidates, solved_problems, threshold=threshold)
-        return set(flagged)
-    except (RuntimeError, ValueError):
-        return set()
 
 
 def _attention_platform(platform_rows: pd.DataFrame, focus: pd.DataFrame) -> str:

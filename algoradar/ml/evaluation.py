@@ -5,10 +5,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.calibration import CalibrationDisplay
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import average_precision_score, brier_score_loss, ndcg_score, roc_auc_score
+from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
 
 
 def temporal_split_user_aware(frame: pd.DataFrame, train_ratio: float = 0.7, val_ratio: float = 0.15) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:

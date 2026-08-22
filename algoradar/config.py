@@ -8,7 +8,6 @@ CACHE_DIR = DATA_DIR / "cache"
 MODEL_DIR = DATA_DIR / "models"
 
 CODEFORCES_BASE_URL = "https://codeforces.com/api"
-DEFAULT_HANDLE = "tourist"
 DEFAULT_SUBMISSION_LIMIT = 2500
 API_TIMEOUT_SECONDS = 20
 

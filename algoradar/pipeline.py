@@ -60,6 +60,7 @@ def run_analysis(
     use_sample: bool = False,
     include_recommendations: bool = True,
     include_semantic: bool = True,
+    include_multi_horizon: bool = True,
 ) -> AnalysisResult:
     if use_sample:
         bundle = make_sample_bundle(handle)
@@ -81,6 +82,8 @@ def run_analysis(
     solve_examples = build_solve_examples(submissions, ratings, problems, weakness)
     contest_model = train_contest_score_predictor(profile)
     solve_model = train_solve_probability_model(solve_examples)
+    # No scheduled/persistent multi-horizon training in interactive pipeline.
+    # Multi-horizon training utilities remain available for offline use.
     if include_recommendations:
         from .recommender import recommend_problems
 
@@ -118,6 +121,7 @@ def run_analysis(
         solve_examples=solve_examples,
         contest_model=contest_model,
         solve_model=solve_model,
+        # multi-horizon models are not trained by default in the interactive pipeline
         weakness_model=weakness_model,
         recommendations=recommendations,
         semantic_method=semantic_method,

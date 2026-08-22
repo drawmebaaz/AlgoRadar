@@ -33,6 +33,7 @@ def main() -> None:
     print(f"Expected next contest band: {result.contest_model['predicted_band']}")
     print(f"Contest model: {result.contest_model['selected_model_name']}")
     print(f"Solve model: {result.solve_model['selected_model_name']}")
+    # multi-horizon training is not run by default during interactive analysis
     print(f"Weakness model accuracy: {result.weakness_model['metrics']['accuracy']:.3f}")
     print(f"Recommendations: {len(result.recommendations)}")
     print()

@@ -280,12 +280,6 @@ def native_to_cf_equivalent(
     )
 
 
-def target_rating_from_difficulty(platform: str, difficulty: str, fallback_rating: int = 1600) -> int:
-    if _platform_key(platform) == "leetcode":
-        return round(native_to_cf_equivalent("LeetCode", leetcode_difficulty=difficulty)["cf_equivalent"])
-    return int(fallback_rating)
-
-
 def available_probability_tags(codeforces_result: Any | None, external_results: dict[str, Any]) -> list[str]:
     tags: set[str] = set()
     if codeforces_result is not None and not codeforces_result.tag_stats.empty:

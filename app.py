@@ -954,88 +954,6 @@ def render_weakness(result) -> None:
         st.plotly_chart(fig, **stretch_kwargs(st.plotly_chart))
 
 
-def render_recommendations(result) -> None:
-    recs = result.recommendations
-    if recs.empty:
-        st.warning("No recommendations could be generated from the current data.")
-        return
-
-    counts = recs["bucket"].value_counts().to_dict()
-    cols = st.columns(4)
-    metric_card(cols[0], "Confidence builders", str(counts.get("confidence", 0)), ">75% solve chance")
-    metric_card(cols[1], "Growth problems", str(counts.get("growth", 0)), "45-75% solve chance")
-    metric_card(cols[2], "Stretch problems", str(counts.get("stretch", 0)), "25-45% solve chance")
-    metric_card(cols[3], "Similar matching", _friendly_matching_method(result.semantic_method), "problem finder")
-
-    for bucket, label in [
-        ("confidence", "5 confidence builders"),
-        ("growth", "10 growth problems"),
-        ("stretch", "5 stretch problems"),
-    ]:
-        panel_title(label, "ranked by solve chance, tag fit, popularity, and difficulty gap")
-        frame = recs[recs["bucket"] == bucket].copy()
-        if frame.empty:
-            st.info(f"No {bucket} recommendations found for this handle yet.")
-            continue
-
-        frame["open"] = frame.apply(_codeforces_problem_url, axis=1)
-        frame = frame[
-            [
-                "open",
-                "problem_id",
-                "name",
-                "rating",
-                "rating_source",
-                "tags",
-                "solve_probability_pct",
-                "tag_similarity",
-                "tag_cosine_similarity",
-                "rating_fit_score",
-                "solved_count",
-                "rank_score",
-            ]
-        ].copy()
-        frame["tags"] = frame["tags"].apply(_format_tags)
-        frame["tag_similarity"] = frame["tag_similarity"].round(2)
-        frame["tag_cosine_similarity"] = frame["tag_cosine_similarity"].round(2)
-        frame["rating_fit_score"] = frame["rating_fit_score"].round(2)
-        frame["rank_score"] = frame["rank_score"].round(3)
-        st.dataframe(
-            frame,
-            **stretch_kwargs(st.dataframe),
-            hide_index=True,
-            column_config={
-                "open": st.column_config.LinkColumn("Open", display_text="Codeforces"),
-                "rating_source": st.column_config.TextColumn("Rating source"),
-                "solve_probability_pct": st.column_config.NumberColumn("Solve %", format="%.1f%%"),
-                "tag_similarity": st.column_config.NumberColumn("Focus tag fit", format="%.2f"),
-                "tag_cosine_similarity": st.column_config.NumberColumn("Topic familiarity", format="%.2f"),
-                "rating_fit_score": st.column_config.NumberColumn("Rating fit", format="%.2f"),
-                "rank_score": st.column_config.NumberColumn("Fit score", format="%.3f"),
-            },
-        )
-
-    panel_title("Similar harder problems", "matched from title, tags, and difficulty")
-    if result.similar_harder.empty:
-        st.info("No similar harder problems found.")
-    else:
-        frame = result.similar_harder.copy()
-        frame["open"] = frame.apply(_codeforces_problem_url, axis=1)
-        frame = frame[["open", "problem_id", "name", "rating", "rating_source", "tags", "semantic_score", "solved_count"]].copy()
-        frame["tags"] = frame["tags"].apply(_format_tags)
-        frame["semantic_score"] = frame["semantic_score"].round(3)
-        st.dataframe(
-            frame,
-            **stretch_kwargs(st.dataframe),
-            hide_index=True,
-            column_config={
-                "open": st.column_config.LinkColumn("Open", display_text="Codeforces"),
-                "rating_source": st.column_config.TextColumn("Rating source"),
-                "semantic_score": st.column_config.NumberColumn("Similarity", format="%.3f"),
-            },
-        )
-
-
 def render_progress(result) -> None:
     progress = result.progress
     cols = st.columns(4)
@@ -1196,17 +1114,6 @@ def bucket_color(bucket: str) -> str:
     }.get(bucket, "#7aa7e8")
 
 
-def _friendly_matching_method(method: str) -> str:
-    value = str(method or "").lower()
-    if "minilm" in value or "sentence" in value:
-        return "Deep matching"
-    if "tfidf" in value:
-        return "Fast matching"
-    if "deferred" in value:
-        return "On demand"
-    return "Available"
-
-
 def _default_problem_code(result) -> str:
     if not result.recommendations.empty:
         growth = result.recommendations[result.recommendations["bucket"] == "growth"]
@@ -1257,22 +1164,6 @@ def _friendly_level_label(level) -> str:
         "Untouched": "Low coverage",
         "Over-attempted but low accuracy": "High effort, low return",
     }.get(str(level or ""), str(level or ""))
-
-
-def _codeforces_problem_url(row: pd.Series) -> str:
-    contest_id = row.get("contest_id")
-    index = row.get("index")
-    if pd.notna(contest_id) and pd.notna(index):
-        return f"https://codeforces.com/problemset/problem/{int(contest_id)}/{index}"
-    problem_id = str(row.get("problem_id", ""))
-    split_at = 0
-    while split_at < len(problem_id) and problem_id[split_at].isdigit():
-        split_at += 1
-    digits = problem_id[:split_at]
-    suffix = problem_id[split_at:]
-    if digits and suffix:
-        return f"https://codeforces.com/problemset/problem/{digits}/{suffix}"
-    return "https://codeforces.com/problemset"
 
 
 def inject_css() -> None:

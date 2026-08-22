@@ -493,6 +493,9 @@ AlgoRadar/
     semantic.py                  Fast / MiniLM similar-problem retrieval
     solve_probability.py         Cross-platform solve-estimate scorecard
     weakness.py                  Rule-based focus scoring
+    ml/
+      evaluation.py               Temporal train/val/test evaluation and ablation studies
+      training_data.py            Real-label training dataset construction from cached events
   scripts/
     run_analysis.py              CLI pipeline runner
     verify_minilm.py             Download and test MiniLM embeddings
@@ -502,8 +505,15 @@ AlgoRadar/
     algoradar-screenshot-recommendations-table.png
     algoradar-screenshot-solve-probability.png
   tests/
+    test_mastery_signals.py      Tag-mastery feature signal tests
     test_pipeline.py             Smoke tests for the analysis pipeline
     test_platforms.py            Non-network tests for platform normalization
+    test_recommender.py          Recommendation scoring and ranking tests
+    test_recommender_session.py  Session-based recommendation state tests
+    test_semantic_annoy.py       Annoy-backed semantic retrieval tests
+    test_semantic_embeddings_only.py  Embedding-only semantic index tests
+    test_semantic_global_index.py     Global semantic index build/query tests
+    test_semantic_persistence.py      Semantic index save/load tests
     test_solve_probability.py    Cross-platform solve-estimate tests
   data/
     platform_calibration.csv     CodeChef/LeetCode difficulty calibration prior
