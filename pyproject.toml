@@ -19,7 +19,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-embeddings = ["sentence-transformers>=3.0"]
 dev = ["pytest>=8.2"]
 
 [tool.setuptools.packages.find]

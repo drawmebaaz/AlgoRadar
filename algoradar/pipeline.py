@@ -19,13 +19,9 @@ from .features import (
     user_profile_features,
     verdict_frame,
 )
-from .models import train_contest_score_predictor, train_solve_probability_model
+from .models import train_solve_probability_model
 from .sample_data import make_sample_bundle
-from .weakness import (
-    classify_weakness,
-    predict_weakness_with_model,
-    train_weakness_model,
-)
+from .weakness import classify_weakness
 
 
 @dataclass
@@ -43,12 +39,8 @@ class AnalysisResult:
     solved_difficulty: pd.DataFrame
     contest_trend: pd.DataFrame
     solve_examples: pd.DataFrame
-    contest_model: dict[str, Any]
     solve_model: dict[str, Any]
-    weakness_model: dict[str, Any]
     recommendations: pd.DataFrame
-    semantic_method: str
-    similar_harder: pd.DataFrame
     progress: pd.DataFrame
 
 
@@ -56,11 +48,8 @@ def run_analysis(
     handle: str,
     force_refresh: bool = False,
     submission_limit: int = DEFAULT_SUBMISSION_LIMIT,
-    prefer_transformer: bool = False,
     use_sample: bool = False,
     include_recommendations: bool = True,
-    include_semantic: bool = True,
-    include_multi_horizon: bool = True,
 ) -> AnalysisResult:
     if use_sample:
         bundle = make_sample_bundle(handle)
@@ -76,34 +65,16 @@ def run_analysis(
     profile["handle"] = handle
 
     weakness = classify_weakness(tag_stats)
-    weakness_model = train_weakness_model()
-    weakness = predict_weakness_with_model(weakness, weakness_model)
 
     solve_examples = build_solve_examples(submissions, ratings, problems, weakness)
-    contest_model = train_contest_score_predictor(profile)
     solve_model = train_solve_probability_model(solve_examples)
-    # No scheduled/persistent multi-horizon training in interactive pipeline.
-    # Multi-horizon training utilities remain available for offline use.
+
     if include_recommendations:
         from .recommender import recommend_problems
 
         recommendations = recommend_problems(problems, submissions, profile, weakness, solve_model)
     else:
         recommendations = pd.DataFrame()
-
-    semantic_method = "deferred"
-    similar_harder = pd.DataFrame()
-    if include_semantic and not recommendations.empty:
-        from .semantic import build_global_index, similar_problems
-
-        semantic_index = build_global_index(problems, prefer_transformer=prefer_transformer)
-        semantic_method = semantic_index.method
-        reference_id = recommendations.iloc[0]["problem_id"]
-        reference = problems[problems["problem_id"] == reference_id].iloc[0]
-        similar_harder = similar_problems(reference, problems, semantic_index, top_n=8, harder_only=True)
-    elif include_semantic:
-        semantic_method = "tfidf-fallback"
-        similar_harder = pd.DataFrame()
 
     return AnalysisResult(
         handle=handle,
@@ -119,13 +90,8 @@ def run_analysis(
         solved_difficulty=solved_difficulty_frame(submissions),
         contest_trend=contest_trend_frame(ratings),
         solve_examples=solve_examples,
-        contest_model=contest_model,
         solve_model=solve_model,
-        # multi-horizon models are not trained by default in the interactive pipeline
-        weakness_model=weakness_model,
         recommendations=recommendations,
-        semantic_method=semantic_method,
-        similar_harder=similar_harder,
         progress=build_progress_frame(submissions, profile),
     )
 

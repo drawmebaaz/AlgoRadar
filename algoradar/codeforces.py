@@ -16,11 +16,14 @@ from .config import (
     CODEFORCES_BASE_URL,
     DEFAULT_SUBMISSION_LIMIT,
 )
-from .sample_data import make_sample_bundle
 
 
 class CodeforcesAPIError(RuntimeError):
-    """Raised when the Codeforces API cannot return usable data."""
+    """Raised when the Codeforces API cannot return usable data.
+
+    AlgoRadar never substitutes synthetic data for a failed live lookup -
+    callers are expected to catch this and show the real reason to the user.
+    """
 
 
 class CodeforcesClient:
@@ -48,8 +51,15 @@ class CodeforcesClient:
         handle: str,
         count: int = DEFAULT_SUBMISSION_LIMIT,
         force_refresh: bool = False,
-        allow_sample_fallback: bool = True,
     ) -> dict[str, Any]:
+        """Fetch a handle's submissions, rating history, and the problemset.
+
+        On any failure this raises `CodeforcesAPIError` with the real reason
+        (bad handle, network error, rate limit, etc). It never falls back to
+        synthetic data for a real handle lookup - that would misrepresent a
+        real user's stats. Use `algoradar.sample_data.make_sample_bundle`
+        directly (via the explicit "Use sample data" option) for demos.
+        """
         try:
             with ThreadPoolExecutor(max_workers=3) as executor:
                 problemset_future = executor.submit(self.problemset, force_refresh=force_refresh)
@@ -58,20 +68,27 @@ class CodeforcesClient:
                 problemset = problemset_future.result()
                 submissions = submissions_future.result()
                 ratings = ratings_future.result()
-            return {
-                "handle": handle,
-                "source": "codeforces",
-                "submissions": submissions,
-                "ratings": ratings,
-                "problems": problemset.get("problems", []),
-                "problem_statistics": problemset.get("problemStatistics", []),
-            }
-        except Exception as exc:
-            if allow_sample_fallback:
-                bundle = make_sample_bundle(handle)
-                bundle["source"] = f"sample fallback: {exc}"
-                return bundle
+        except CodeforcesAPIError:
             raise
+        except requests.exceptions.Timeout as exc:
+            raise CodeforcesAPIError(
+                f"Codeforces API request timed out after {self.timeout}s. The API may be slow or unreachable right now - try again shortly."
+            ) from exc
+        except requests.exceptions.ConnectionError as exc:
+            raise CodeforcesAPIError(
+                "Could not reach the Codeforces API (network/connection error). Check your internet connection and try again."
+            ) from exc
+        except requests.exceptions.RequestException as exc:
+            raise CodeforcesAPIError(f"Codeforces API request failed: {exc}") from exc
+
+        return {
+            "handle": handle,
+            "source": "codeforces",
+            "submissions": submissions,
+            "ratings": ratings,
+            "problems": problemset.get("problems", []),
+            "problem_statistics": problemset.get("problemStatistics", []),
+        }
 
     def _get(self, method: str, params: dict[str, Any]) -> Any:
         url = f"{CODEFORCES_BASE_URL}/{method}"
@@ -80,7 +97,7 @@ class CodeforcesClient:
         payload = response.json()
         if payload.get("status") != "OK":
             comment = payload.get("comment", "Unknown API error")
-            raise CodeforcesAPIError(f"{method} failed: {comment}")
+            raise CodeforcesAPIError(f"Codeforces API rejected the request ({method}): {comment}")
         return payload.get("result")
 
     def _cached(

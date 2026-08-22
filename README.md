@@ -2,13 +2,11 @@
 
 ![AlgoRadar combined analysis](social_assets/algoradar-screenshot-combined-analysis.png)
 
-**AlgoRadar | Data-Driven Competitive Programming Analytics and Recommender**
+**AlgoRadar | Competitive Programming Analytics and Recommendation System**
 
-AlgoRadar is a data-driven competitive programming analytics and recommendation system for Codeforces, CodeChef, and LeetCode. A user enters any combination of the three handles, and the app returns platform-wise analytics, focus areas, practice recommendations, and practical solve estimates from the handles provided.
+AlgoRadar is a competitive programming analytics and recommendation system for Codeforces, CodeChef, and LeetCode. A user enters any combination of the three handles, and the app returns platform-wise analytics, focus areas, practice recommendations, and a solve-probability estimate for any problem.
 
-At a high level, AlgoRadar is best described as a data-driven recommendation and ranking system with statistical scoring and semantic retrieval. The project combines public platform data, feature engineering, transparent ranking rules, calibrated solve-probability models, and retrieval-based similar-problem search. Codeforces has the deepest signal because its official API exposes verdict-level submissions. LeetCode and CodeChef are normalized into the same product experience using their public profile, contest, topic, and practice-problem data.
-
-The goal is not just to show charts. AlgoRadar builds a full data pipeline: API ingestion, caching, data cleaning, feature engineering, transparent scoring rules, real-label model evaluation, problem ranking, and similar-problem search. The current stack is grounded in observed user-problem outcomes from cached histories when available, rather than relying only on hand-tuned priors or synthetic labels.
+Codeforces has the deepest signal because its official API exposes verdict-level submissions. LeetCode and CodeChef are normalized into the same product experience using their public profile, contest, topic, and practice-problem data.
 
 ## Features
 
@@ -27,10 +25,8 @@ The goal is not just to show charts. AlgoRadar builds a full data pipeline: API 
 - Contest performance trend
 - Focus table for every tag
 - Transparent rule-based tag scoring
-- Next-contest performance band prediction
-- Practical solve-estimate model
+- Explainable solve-probability scorecard
 - Confidence/growth/stretch recommendation queues
-- Similar-but-harder problem retrieval
 - Progress tracking
 - Clean Streamlit dashboard
 
@@ -65,50 +61,37 @@ The goal is not just to show charts. AlgoRadar builds a full data pipeline: API 
 
 - Python
 - Streamlit
-- pandas
+- pandas / NumPy
 - scikit-learn
 - Plotly
 - Codeforces API
 - LeetCode GraphQL public profile data
 - CodeChef public profile and practice-problem data
-- Fast similar-problem search
-- Optional local MiniLM matching for better similar-problem results
 
-## Recommendation and Probability Logic
+## Solve-Probability Scorecard
 
 AlgoRadar does not recommend problems by rating alone. Every recommendation is scored from a user-specific feature row built from the handle data available for that platform.
 
-The solve estimate uses practical signals such as:
+The solve estimate is a hand-tuned, explainable logistic scorecard built from:
 
-- problem rating or estimated difficulty
-- estimated user level
-- rating gap
-- attempts on related tags
-- solved count on related tags
-- average solved difficulty on related tags
-- hardest solved difficulty on related tags
-- total solved volume
-- inferred recent failures
-- problem popularity
-- tag count
-- confidence in the problem difficulty source
-- real-label solve features from cached common-user outcomes when available
+- rating gap between the problem and the user's estimated level
+- tag depth: how many problems on the relevant tags the user has already solved
+- solved volume: total problems solved
+- recent failures on the relevant tags
+- problem popularity (accepted-submission count)
+- calibrated difficulty: CodeChef and LeetCode ratings/labels are mapped onto a shared Codeforces-equivalent scale via `data/platform_calibration.csv`
 
-This is not a black-box ML-only system. It is a statistical recommendation stack that blends explainable features, calibrated logistic scoring, and lightweight semantic retrieval. Success rate is intentionally not the main signal. Public accepted submissions can be inflated by editorials or AI help, so AlgoRadar gives more importance to solved volume, tag depth, hardest solved difficulty, and the gap between the target problem and the user's demonstrated level.
+There is no trained classifier behind this - the coefficients are fixed and chosen to keep the curve monotonic, so a harder problem never scores higher than an easier one, all else equal. Success rate is intentionally not the main signal, since public accepted-submission counts can be inflated by editorials or AI help; the scorecard weights solved volume, tag depth, and the gap between the target problem and the user's demonstrated level instead.
 
-Recommendations are then ranked using:
+## Recommender
 
-- solve-estimate bucket fit
-- focus-tag similarity
-- tag-vector cosine similarity
-- Gaussian rating fit
-- hardest-solved ceiling gap
-- available evidence strength
-- log popularity nudge
-- difficulty confidence
-- diversity across tags and rating bands
+The recommender picks 60 unsolved problems per user, split into `confidence`, `growth`, and `stretch` queues:
 
-The new tag-vector cosine score is a familiarity signal: it checks whether a candidate problem uses topics the user has already solved before. It does not replace the focus-area logic, because recommendations should not become only comfort-zone practice. The Gaussian rating-fit score gives a smooth closeness signal around the user's rating, while the existing bucket logic still decides whether a problem is confidence, growth, stretch, or avoid-for-now.
+1. **Candidate filtering** - the full problemset is narrowed to a rating window around the user's level and a tag-relevant pool (via Jaccard tag overlap against the user's weak tags) before scoring, so the app stays responsive.
+2. **Solve-probability scoring** - each remaining candidate is scored with the scorecard above.
+3. **Learning-value ranking** - candidates are ranked by a blend of solve-probability fit for the growth zone, tag relevance to the user's weak areas, evidence strength (how many tag-relevant problems the user has solved), problem popularity, and a Gaussian rating-closeness score.
+4. **Similar-problem matching** - a tag vector is built from the user's solved problems, and each candidate's tag set is compared against it with scikit-learn's cosine similarity. This "topic familiarity" score nudges the ranking toward problems that build on topics the user already knows, without making the whole recommender just comfort-zone practice.
+5. **Diversity** - the final picks are diversified across tags and rating bands so one topic or difficulty band doesn't dominate a queue.
 
 The result is split into platform-specific queues:
 
@@ -116,45 +99,22 @@ The result is split into platform-specific queues:
 - `growth`: sweet-spot problems for skill improvement
 - `stretch`: harder problems that are still realistic
 
-## Sequence-Aware Fuzzy Logic Ranker
-
-AlgoRadar now uses a Sequence-Aware Fuzzy Logic Ranker to produce recommendations and solve estimates. This ranker combines time-decayed tag mastery, a fuzzy struggle signal, short-term session intent, prerequisite filtering, and cross-platform twin detection to make conservative, explainable practice suggestions.
-
-- **Time-decayed tag mastery**: per-submission tag weights are computed with exponential decay `weight = exp(-lambda * days_since)` (lambda = 0.015 days) so recent activity matters more.
-- **Fuzzy struggle**: problems where users needed multiple attempts are detected via a bounded fuzzy score: `fuzzy_struggle = clip((attempts - 1)/(T - 1), 0, 1)` with `T = 5`. The ranker aggregates an `average_fuzzy_struggle_on_tag` to surface tags where the user actually struggled.
-- **Session context**: the last 3 attempted tags are tracked as session intent. Problems matching session intent receive a `session_multiplier = 1.15` boost to learning value to respect short-term practice goals.
-- **Prerequisite filter**: a lightweight prerequisite DAG (stubbed in the code) computes a `prereq_fit_score`. Problems below the safe threshold (0.65) receive a penalty multiplier (0.8) to avoid recommending problems that likely require missing foundations.
-- **Cross-platform isomorphic twins**: LeetCode candidates that are near-duplicates of already-solved Codeforces problems are flagged and removed from growth/stretch queues when cosine similarity exceeds `0.88` (local MiniLM or TF-IDF fallback).
-
-- **Dynamic logistic scorecard**: the solve-probability score uses a dynamic logit formulation with tuned coefficients and monotonic caps. Key constants used in the current build include `base_bias=0.25`, `scale_factor=275.0`, weights `w1=0.36`, `w2=0.28`, `w3=0.44`, `w4=0.14`, and practical caps to keep estimates realistic.
-
-This change favors explainability and sequence-awareness over raw acceptance-rate signals and is validated by the test-suite included in the repo.
-
-Codeforces uses the richest signal because it has official problem ratings, tags, solved counts, and verdict-level user submissions. CodeChef and LeetCode use dynamic platform-specific scorecards from public rating, topic, contest, difficulty, and practice-problem signals instead of fixed hardcoded percentages.
+Codeforces uses the richest signal because it has official problem ratings, tags, solved counts, and verdict-level user submissions. CodeChef and LeetCode use the same scorecard against calibrated ratings from public profile, topic, contest, and difficulty signals.
 
 ## How It Works
 
 AlgoRadar runs this pipeline:
 
-1. Fetch Codeforces submissions, contest rating history, and problemset metadata.
+1. Fetch Codeforces submissions, contest rating history, and problemset metadata (with a reproducible sample-data fallback if the API is unavailable).
 2. Fetch optional LeetCode and CodeChef profiles only when their handles are added and their screens need the data.
 3. Cache API/profile/problem-catalog responses locally in `data/cache/` so repeated runs are faster.
 4. Convert raw platform data into normalized pandas feature tables.
 5. Compute analytics such as success by difficulty, tag/topic coverage, verdict distribution, difficulty mix, and contest trends.
-6. Score focus areas using transparent rules first.
-7. Estimate the next-contest performance band from contest history, rating trend, solved volume, and recent success.
-8. Build solve-estimate rows from rating gap, solved depth, tag evidence, recent failures, and popularity.
-9. Apply a monotonic scorecard so harder problems do not randomly receive higher estimates.
-10. Keep same-level problems realistic instead of treating them as guaranteed solves.
-11. Add explainable recommendation signals such as solved-tag vector similarity and Gaussian rating fit.
-12. Rank problems into confidence, growth, and stretch queues with duplicate and diversity controls.
-13. Build a similar-problem search layer using a fast local matcher by default.
-
-The app uses live Codeforces data by default. If the API is unavailable, the backend has a reproducible sample-data fallback so the pipeline can still be tested.
+6. Score focus areas using transparent rules.
+7. Score every candidate problem with the solve-probability scorecard.
+8. Filter, rank, and diversify candidates into confidence/growth/stretch queues (see Recommender above).
 
 ## Metric Definitions
-
-AlgoRadar avoids treating every number as equally meaningful. The main user-facing metrics are:
 
 - **Current rating**: official latest rating for that platform only.
 - **Max rating**: official peak rating for that platform only.
@@ -164,7 +124,7 @@ AlgoRadar avoids treating every number as equally meaningful. The main user-faci
 - **Success by difficulty**: success rate grouped by official or estimated problem rating.
 - **Hardest solved**: highest-rated accepted problem for a tag.
 - **Focus score**: a topic score based on low success, recent failures, and attempt volume.
-- **Solve estimate**: a practical estimate that prioritizes rating gap, solved volume, hardest solved difficulty, average solved difficulty, and the selected problem tags. Success rate is intentionally not the main signal because accepted submissions can be distorted by AI/editorial help.
+- **Solve estimate**: a practical estimate that prioritizes rating gap, solved volume, hardest solved difficulty, average solved difficulty, and the selected problem tags.
 - **Topic familiarity**: a tag-vector cosine score that measures whether a recommended problem uses topics the user has already solved before. It is only a small comfort signal, not the whole recommender.
 - **Rating fit**: a Gaussian rating-closeness score that is highest near the user's rating and smoothly falls for much easier or harder problems.
 - **Rating source**: `official` means Codeforces provides the problem rating; `estimated` means AlgoRadar inferred it from problem index and solved count.
@@ -172,20 +132,6 @@ AlgoRadar avoids treating every number as equally meaningful. The main user-faci
 - **LeetCode focus areas**: coverage-based signal from public solved topic counters. LeetCode does not expose full public verdict history for every solved/failed problem.
 - **CodeChef focus areas**: rating-history and practice-volume signal from the public profile. CodeChef public solved profiles do not expose reliable tag-level verdict history.
 - **Combined solved**: sum of public solved-count signals across connected platforms. It is useful for progress direction, not as a perfect apples-to-apples skill rating.
-
-## Model Validation and Benchmarking
-
-AlgoRadar now includes a real-label evaluation layer for the solve model. The important distinction is that the solve-probability model is trained on observed user-problem outcomes from cached historical submission data, not just on heuristic priors or synthetic labels.
-
-The current validation workflow is:
-
-1. Build event-level rows from actual user attempts with a fixed outcome window.
-2. Use only pre-event information for each row so there is no future leakage.
-3. Split by user and time, not by random row shuffle.
-4. Compare a constant baseline, a monotonic heuristic baseline, a logistic model, and a calibrated logistic in the same evaluation frame.
-5. Summarize feature importance and benchmark the best model on a holdout split.
-
-This is intentionally honest: the project is not a pure black-box recommender. It is a data-driven recommendation and ranking system that blends transparent feature engineering, statistical scoring, calibrated solve estimates, and semantic retrieval.
 
 ## Setup
 
@@ -311,50 +257,6 @@ python scripts\run_analysis.py tourist --sample
 python3 scripts/run_analysis.py tourist --sample
 ```
 
-## Optional Embeddings
-
-By default, AlgoRadar uses a fast local search fallback for similar problems.
-
-To use `sentence-transformers/all-MiniLM-L6-v2`, install the optional dependencies:
-
-#### Windows
-
-```powershell
-python -m pip install -r requirements-embeddings.txt
-```
-
-#### macOS / Linux
-
-```bash
-python3 -m pip install -r requirements-embeddings.txt
-```
-
-Then run:
-
-#### Windows
-
-```powershell
-python scripts\verify_minilm.py
-```
-
-#### macOS / Linux
-
-```bash
-python3 scripts/verify_minilm.py
-```
-
-This downloads `sentence-transformers/all-MiniLM-L6-v2` into the local Hugging Face cache and verifies that embeddings are being generated correctly. The first run can take time depending on your internet speed; after that, the Streamlit toggle should be much faster.
-
-Then start the app:
-
-```bash
-streamlit run app.py
-```
-
-Turn on **Improve similar-problem matching** in the sidebar when using the Recommendations section. If the optional stack is not installed or the model cannot load, AlgoRadar falls back to the fast local matcher.
-
-By default, the Streamlit app only uses a locally cached MiniLM model so normal analysis does not hang on a first-time model download. To allow downloading from inside the app, set `ALGORADAR_ALLOW_MINILM_DOWNLOAD=1` before running Streamlit.
-
 ## Run Tests
 
 Install dev dependencies:
@@ -395,34 +297,6 @@ ruff check .
 ruff --fix .
 ```
 
-- After making changes, recommended commit flow:
-
-```bash
-git checkout -b feat/sequence-aware-ranker
-git add -A
-git commit -m "Feat: sequence-aware fuzzy ranker + twin detection + lint cleanup"
-git push -u origin feat/sequence-aware-ranker
-```
-
-- Optional: verify embeddings/local MiniLM behavior before enabling in the app. Set `ALGORADAR_ALLOW_MINILM_DOWNLOAD=1` to allow runtime downloads.
-
-## Semantic Index Persistence & ANN
-
-AlgoRadar now persists semantic indices to `data/cache/` to avoid rebuilding heavy embeddings at every run. Key points:
-
-- **Where cached**: `data/cache/semantic_vectors.npy` and `data/cache/semantic_meta.pkl`. Optional Annoy index stored at `data/cache/semantic.ann` when Annoy is available.
-- **Enable MiniLM**: install `requirements-embeddings.txt` and run `scripts/verify_minilm.py` once. To allow in-app downloads set:
-
-```bash
-export ALGORADAR_ALLOW_MINILM_DOWNLOAD=1  # macOS/Linux
-setx ALGORADAR_ALLOW_MINILM_DOWNLOAD 1   # Windows (restart shell)
-```
-
-- **Annoy (optional)**: install with `pip install annoy` to get fast on-disk ANN search. If Annoy is not installed, AlgoRadar falls back to TF-IDF or brute-force cosine for similarity.
-- **Force rebuild**: delete the files under `data/cache/semantic_*` or run the app with `--refresh` options where available.
-
-This improves startup time and scales similarity searches for large catalogs.
-
 ## Update README Screenshots
 
 The README preview uses real app screenshots stored in `social_assets/`. To refresh the gallery, replace these files with new screenshots using the same filenames:
@@ -431,6 +305,10 @@ The README preview uses real app screenshots stored in `social_assets/`. To refr
 - `algoradar-screenshot-recommendations-overview.png`
 - `algoradar-screenshot-recommendations-table.png`
 - `algoradar-screenshot-solve-probability.png`
+
+## Error Handling
+
+If a Codeforces handle lookup fails - bad handle, network issue, rate limit, timeout - AlgoRadar shows the real reason as an error message. It never substitutes synthetic data for a failed live lookup, since that would silently misrepresent a real user's stats. Sample data is only ever used when explicitly requested, either via `--sample` on the CLI or directly through `algoradar.sample_data.make_sample_bundle` in tests/demos.
 
 ## Troubleshooting
 
@@ -452,16 +330,6 @@ python3 -m pip install --upgrade -r requirements.txt
 
 Then restart the app with `streamlit run app.py`.
 
-If you see a NumPy error like `np.unicode_ was removed in the NumPy 2.0 release`, your environment has a NumPy 2.x package mixed with an older scientific package from Anaconda. Pull the latest repo changes and reinstall the pinned requirements:
-
-#### macOS / Linux
-
-```bash
-git pull
-python3 -m pip install --upgrade --force-reinstall -r requirements.txt
-streamlit run app.py
-```
-
 For Anaconda users, avoid the base environment:
 
 ```bash
@@ -479,46 +347,33 @@ AlgoRadar/
   app.py                         Streamlit dashboard
   requirements.txt               App dependencies
   requirements-dev.txt           Test dependencies
-  requirements-embeddings.txt    Optional MiniLM embedding dependencies
   runtime.txt                    Python runtime version
   algoradar/
     codeforces.py                Codeforces API client and caching
     config.py                    Project paths and constants
     features.py                  pandas feature engineering
-    models.py                    contest and solve-estimate models
+    models.py                    Explainable solve-probability scorecard
     pipeline.py                  End-to-end analysis orchestration
     platforms.py                 LeetCode/CodeChef clients, normalization, combined analysis
-    recommender.py               Problem ranking and recommendation logic
+    recommender.py                Problem ranking and recommendation logic
     sample_data.py               Reproducible fallback data
-    semantic.py                  Fast / MiniLM similar-problem retrieval
     solve_probability.py         Cross-platform solve-estimate scorecard
     weakness.py                  Rule-based focus scoring
-    ml/
-      evaluation.py               Temporal train/val/test evaluation and ablation studies
-      training_data.py            Real-label training dataset construction from cached events
   scripts/
     run_analysis.py              CLI pipeline runner
-    verify_minilm.py             Download and test MiniLM embeddings
   social_assets/
     algoradar-screenshot-combined-analysis.png
     algoradar-screenshot-recommendations-overview.png
     algoradar-screenshot-recommendations-table.png
     algoradar-screenshot-solve-probability.png
   tests/
-    test_mastery_signals.py      Tag-mastery feature signal tests
     test_pipeline.py             Smoke tests for the analysis pipeline
     test_platforms.py            Non-network tests for platform normalization
     test_recommender.py          Recommendation scoring and ranking tests
-    test_recommender_session.py  Session-based recommendation state tests
-    test_semantic_annoy.py       Annoy-backed semantic retrieval tests
-    test_semantic_embeddings_only.py  Embedding-only semantic index tests
-    test_semantic_global_index.py     Global semantic index build/query tests
-    test_semantic_persistence.py      Semantic index save/load tests
     test_solve_probability.py    Cross-platform solve-estimate tests
   data/
     platform_calibration.csv     CodeChef/LeetCode difficulty calibration prior
     cache/                       Cached API responses
-    models/                      Trained local model reports
 ```
 
 ## Solve Estimate Buckets
@@ -532,9 +387,8 @@ AlgoRadar classifies recommended problems into:
 
 ## Notes
 
-- The dashboard uses real platform data by default.
+- The dashboard uses real platform data by default. If a live lookup fails, AlgoRadar surfaces the actual error instead of substituting synthetic data.
 - API responses, profile pages, and problem catalogs are cached locally to improve speed.
-- The project now builds a labeled user-problem dataset from cached Codeforces histories and evaluates logistic models on real solve outcomes, making the probability model grounded in actual historical outcomes rather than a synthetic prior alone.
 - Codeforces problem tags are pulled from the Codeforces problemset. LeetCode problem tags are pulled automatically when you enter a problem slug or URL in Solve estimate.
 - First-time LeetCode/CodeChef recommendation pulls can take a few seconds because the app builds local caches. Reopening the same handles is much faster.
 - The app analyzes the latest 2,500 Codeforces submissions for a practical balance of speed and signal.

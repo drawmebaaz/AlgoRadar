@@ -23,13 +23,6 @@ SOLVE_FEATURE_COLUMNS = [
     "recent_accuracy",
     "solved_volume_log",
     "rating_confidence",
-    # New sequence-aware / fuzzy features
-    "decayed_tag_mastery",
-    "prereq_fit_score",
-    "average_fuzzy_struggle_on_tag",
-    "recent_mastery",
-    "long_term_mastery",
-    "cosine_similarity",
 ]
 
 INDEX_RATING_BASELINE = {
@@ -187,74 +180,28 @@ def tag_feature_frame(submissions: pd.DataFrame, problems: pd.DataFrame | None =
     if exploded.empty:
         exploded = pd.DataFrame(columns=["tag", "is_accepted", "is_wrong", "rating", "problem_id", "created_at"])
 
-    # Build fuzzy/problem-level struggle and time-decay weights
-    # attempts_on_problem -> used to compute fuzzy struggle per problem
-    attempts_per_problem = submissions.groupby("problem_id").size().rename("attempts_on_problem")
-    attempts_per_problem = attempts_per_problem.reindex(submissions["problem_id"].unique()).fillna(0)
-
     grouped = exploded.groupby("tag", dropna=False)
 
-    # time-decayed weights already attached on explosion (see _explode_submission_tags)
-    # weighted counts/accuracy use the decay weight
-    attempts = grouped["weight"].sum().rename("attempts")
-    accepted_submissions = grouped.apply(lambda g: (g["is_accepted"] * g["weight"]).sum()).rename("accepted_submissions")
-    wrong = grouped.apply(lambda g: (g["is_wrong"] * g["weight"]).sum()).rename("wrong_submissions")
+    attempts = grouped.size().rename("attempts")
+    accepted_submissions = grouped["is_accepted"].sum().rename("accepted_submissions")
+    wrong = grouped["is_wrong"].sum().rename("wrong_submissions")
 
-    # solved: number of unique accepted problems (kept as a count, not weight)
+    # solved: number of unique accepted problems
     solved = exploded[exploded["is_accepted"]].groupby("tag")["problem_id"].nunique().rename("solved")
 
-    # weighted/rate statistics for accepted submissions
-    def _weighted_mean_rating(df: pd.DataFrame) -> float:
-        accepted = df[df["is_accepted"]]
-        if accepted.empty:
-            return 0.0
-        weights = accepted["weight"].to_numpy(dtype=float)
-        vals = accepted["rating"].to_numpy(dtype=float)
-        if weights.sum() <= 0:
-            return float(vals.mean()) if len(vals) else 0.0
-        return float((vals * weights).sum() / weights.sum())
-
-    avg_rating = grouped.apply(_weighted_mean_rating).rename("avg_rating_solved")
-    max_rating = exploded[exploded["is_accepted"]].groupby("tag")["rating"].max().rename("max_rating_solved")
+    accepted_only = exploded[exploded["is_accepted"]]
+    avg_rating = accepted_only.groupby("tag")["rating"].mean().rename("avg_rating_solved")
+    max_rating = accepted_only.groupby("tag")["rating"].max().rename("max_rating_solved")
 
     recent = exploded.sort_values("created_at").groupby("tag", group_keys=False).tail(30)
     recent_failures = recent[recent["is_wrong"]].groupby("tag").size().rename("recent_failures")
     recent_accuracy = recent.groupby("tag")["is_accepted"].mean().rename("recent_accuracy")
 
-    # long-term mastery: compute accuracy from submissions older than a recent window (days)
-    RECENT_WINDOW_DAYS = 30
-    if "age_days" in exploded.columns:
-        older = exploded[exploded["age_days"] > RECENT_WINDOW_DAYS]
-    else:
-        older = exploded.iloc[0:0]
-    if not older.empty:
-        long_attempts = older.groupby("tag")["is_accepted"].count().rename("long_attempts")
-        long_accepted = older.groupby("tag")["is_accepted"].sum().rename("long_accepted")
-        long_accuracy = (long_accepted / long_attempts).rename("long_accuracy")
-    else:
-        long_accuracy = pd.Series(dtype=float)
-
-    # fuzzy struggle: compute per-problem attempts then average (time-weighted)
-    # attempts_on_problem is derived from raw submission counts (not exploded)
-    problem_attempts = submissions.groupby("problem_id").size().to_dict()
-    exploded["attempts_on_problem"] = exploded["problem_id"].apply(lambda pid: int(problem_attempts.get(pid, 0)))
-    T = 5
-    exploded["fuzzy_struggle"] = np.clip((exploded["attempts_on_problem"].astype(float) - 1.0) / float(max(1, T - 1)), 0.0, 1.0)
-    # per-tag average fuzzy struggle using time-decay weights
-    avg_fuzzy_struggle = grouped.apply(lambda g: np.average(g["fuzzy_struggle"], weights=g["weight"]) if g["weight"].sum() > 0 else 0.0).rename("avg_fuzzy_struggle")
-
     frame = pd.DataFrame(index=sorted(all_tags))
     frame.index.name = "tag"
-    frame = frame.join([attempts, solved, accepted_submissions, wrong, avg_rating, max_rating, recent_failures, recent_accuracy, avg_fuzzy_struggle]).fillna(0)
+    frame = frame.join([attempts, solved, accepted_submissions, wrong, avg_rating, max_rating, recent_failures, recent_accuracy]).fillna(0)
     frame["accuracy"] = np.where(frame["attempts"] > 0, frame["accepted_submissions"] / frame["attempts"] * 100, 0.0)
     frame["recent_accuracy"] = frame["recent_accuracy"] * 100
-    # long_term_mastery: prefer long_accuracy when available, else fallback to overall accuracy
-    def _long_term_mastery_for_tag(tag: str) -> float:
-        v = long_accuracy.get(tag, None)
-        if v is not None and not pd.isna(v):
-            return float(v * 100)
-        return float(frame.loc[tag, "accuracy"] if tag in frame.index else 0.0)
-    frame["long_term_mastery"] = [ _long_term_mastery_for_tag(tag) for tag in frame.index ]
     return frame.reset_index()[
         [
             "tag",
@@ -266,8 +213,6 @@ def tag_feature_frame(submissions: pd.DataFrame, problems: pd.DataFrame | None =
             "wrong_submissions",
             "recent_failures",
             "recent_accuracy",
-            "avg_fuzzy_struggle",
-            "long_term_mastery",
         ]
     ]
 
@@ -404,8 +349,6 @@ def build_solve_examples(
                 "user_rating": user_rating,
                 "rating_gap": rating - user_rating,
                 "tag_accuracy": float(np.mean(tag_values)) if tag_values else 0.0,
-                # decayed_tag_mastery: normalized 0..1 from time-decayed tag accuracy
-                "decayed_tag_mastery": float(np.mean([v / 100.0 for v in tag_values])) if tag_values else 0.0,
                 "attempts_on_tag": float(np.mean(attempt_values)) if attempt_values else 0.0,
                 "tag_solved_count": float(np.mean(solved_values)) if solved_values else 0.0,
                 "tag_avg_rating_solved": float(np.mean([value for value in avg_rating_values if value])) if any(avg_rating_values) else 0.0,
@@ -416,11 +359,6 @@ def build_solve_examples(
                 "recent_accuracy": recent_accuracy,
                 "solved_volume_log": math.log1p(float(profile.get("problems_solved", 0) or 0)),
                 "rating_confidence": rating_confidence,
-                "prereq_fit_score": 1.0,
-                "average_fuzzy_struggle_on_tag": float(np.mean([tag_lookup.get(tag, {}).get("avg_fuzzy_struggle", 0.0) for tag in tags])) if tags else 0.0,
-                "recent_mastery": float(np.mean([tag_lookup.get(tag, {}).get("recent_accuracy", 0.0) / 100.0 for tag in tags])) if tags else 0.0,
-                "long_term_mastery": float(np.mean([tag_lookup.get(tag, {}).get("long_term_mastery", tag_lookup.get(tag, {}).get("accuracy", 0.0)) / 100.0 for tag in tags])) if tags else 0.0,
-                "cosine_similarity": 0.0,
                 "solved": solved,
             }
         )
@@ -469,35 +407,13 @@ def make_problem_feature_row(
         "recent_accuracy": float(profile.get("recent_accuracy", 0)),
         "solved_volume_log": math.log1p(float(profile.get("problems_solved", 0) or 0)),
         "rating_confidence": rating_confidence,
-        "decayed_tag_mastery": float(np.mean([v / 100.0 for v in tag_values])) if tag_values else 0.0,
-        "prereq_fit_score": 1.0,
-        "average_fuzzy_struggle_on_tag": float(np.mean([tag_lookup.get(tag, {}).get("avg_fuzzy_struggle", 0.0) for tag in tags])) if tags else 0.0,
-        "recent_mastery": float(np.mean([tag_lookup.get(tag, {}).get("recent_accuracy", 0.0) / 100.0 for tag in tags])) if tags else 0.0,
-        "long_term_mastery": float(np.mean([tag_lookup.get(tag, {}).get("long_term_mastery", tag_lookup.get(tag, {}).get("accuracy", 0.0)) / 100.0 for tag in tags])) if tags else 0.0,
-        "cosine_similarity": 0.0,
     }
 
 
 def _explode_submission_tags(submissions: pd.DataFrame) -> pd.DataFrame:
     frame = submissions.copy()
     frame["tags"] = frame["tags"].apply(lambda tags: tags if tags else ["untagged"])
-    # add time-decay weight for each submission (days-based)
-    # lambda controls decay speed; recent submissions get weight close to 1
-    LAMBDA = 0.015
-    try:
-        now = pd.Timestamp.utcnow()
-        delta_days = (now - frame["created_at"]).dt.total_seconds() / 86400.0
-        delta_days = delta_days.fillna(0.0)
-        frame["weight"] = np.exp(-LAMBDA * delta_days.astype(float))
-        frame["age_days"] = delta_days.astype(float)
-    except (AttributeError, KeyError, TypeError, ValueError):
-        frame["weight"] = 1.0
-
-    exploded = frame.explode("tags").rename(columns={"tags": "tag"})
-    # ensure numeric columns have expected dtypes
-    if "weight" not in exploded.columns:
-        exploded["weight"] = 1.0
-    return exploded
+    return frame.explode("tags").rename(columns={"tags": "tag"})
 
 
 def estimate_problem_rating(index: Any, solved_count: float = 0) -> float:

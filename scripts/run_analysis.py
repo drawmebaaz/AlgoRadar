@@ -12,17 +12,15 @@ from algoradar import run_analysis
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the AlgoRadar ML pipeline for a Codeforces handle.")
+    parser = argparse.ArgumentParser(description="Run the AlgoRadar analytics and recommender pipeline for a Codeforces handle.")
     parser.add_argument("handle", nargs="?", default="tourist")
     parser.add_argument("--refresh", action="store_true", help="Force Codeforces API refresh.")
-    parser.add_argument("--embeddings", action="store_true", help="Try sentence-transformers/all-MiniLM-L6-v2.")
     parser.add_argument("--sample", action="store_true", help="Use reproducible local sample data instead of Codeforces API.")
     args = parser.parse_args()
 
     result = run_analysis(
         args.handle,
         force_refresh=args.refresh,
-        prefer_transformer=args.embeddings,
         use_sample=args.sample,
     )
 
@@ -30,11 +28,7 @@ def main() -> None:
     print(f"Source: {result.source}")
     print(f"Problems solved: {result.profile['problems_solved']}")
     print(f"Current rating: {result.profile['current_rating']}")
-    print(f"Expected next contest band: {result.contest_model['predicted_band']}")
-    print(f"Contest model: {result.contest_model['selected_model_name']}")
     print(f"Solve model: {result.solve_model['selected_model_name']}")
-    # multi-horizon training is not run by default during interactive analysis
-    print(f"Weakness model accuracy: {result.weakness_model['metrics']['accuracy']:.3f}")
     print(f"Recommendations: {len(result.recommendations)}")
     print()
     print("Top weakness tags:")

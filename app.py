@@ -6,6 +6,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from algoradar.codeforces import CodeforcesAPIError
 from algoradar.platforms import (
     analyze_external_platforms,
     build_combined_overview,
@@ -40,22 +41,18 @@ def stretch_kwargs(component) -> dict[str, bool | str]:
 def cached_analysis(
     handle: str,
     force_refresh: bool,
-    prefer_transformer: bool,
     use_sample: bool,
     submission_limit: int,
     include_recommendations: bool,
-    include_semantic: bool,
 ):
     from algoradar.pipeline import run_analysis
 
     return run_analysis(
         handle=handle,
         force_refresh=force_refresh,
-        prefer_transformer=prefer_transformer,
         use_sample=use_sample,
         submission_limit=submission_limit,
         include_recommendations=include_recommendations,
-        include_semantic=include_semantic,
     )
 
 
@@ -89,11 +86,6 @@ def main() -> None:
         leetcode_handle = st.text_input("LeetCode username", key="leetcode_handle_input", help="Optional. Enables LeetCode topic and contest analysis.")
         analyze = st.button("Analyze handles", **stretch_kwargs(st.button))
         force_refresh = st.toggle("Refresh platform caches", value=False)
-        prefer_transformer = st.toggle(
-            "Improve similar-problem matching",
-            value=False,
-            help="Optional. Uses a local MiniLM model for better similar-problem matching. Run scripts/verify_minilm.py once after installing optional dependencies.",
-        )
 
         screen_options = [
             "Combined analysis",
@@ -118,7 +110,6 @@ def main() -> None:
         "leetcode": leetcode_handle.strip(),
         "codechef": codechef_handle.strip(),
         "force_refresh": force_refresh,
-        "prefer_transformer": prefer_transformer,
     }
     if "active_handle_args" not in st.session_state:
         st.session_state.active_handle_args = current_args
@@ -137,14 +128,15 @@ def main() -> None:
         cf_args = {
             "handle": active_args["codeforces"],
             "force_refresh": active_args["force_refresh"],
-            "prefer_transformer": active_args["prefer_transformer"],
             "use_sample": False,
             "submission_limit": 2500 if screen in {"Codeforces", "Recommendations"} else 1200,
             "include_recommendations": include_recommendations,
-            "include_semantic": include_recommendations,
         }
         with st.spinner("Loading Codeforces profile and submissions..."):
-            result = cached_analysis(**cf_args)
+            try:
+                result = cached_analysis(**cf_args)
+            except CodeforcesAPIError as exc:
+                st.error(f"Codeforces lookup failed for '{cf_args['handle']}': {exc}")
 
     external_handles = _external_handles_for_screen(screen, active_args)
     if external_handles["leetcode"] or external_handles["codechef"]:
